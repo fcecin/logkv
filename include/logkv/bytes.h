@@ -360,6 +360,19 @@ public:
     size_ = size;
   }
 
+  void assign(const char* data, size_t size) {
+    if (size) {
+      if (size_ != size) {
+        delete[] data_;
+        data_ = new char[size];
+        size_ = size;
+      }
+      std::memcpy(data_, data, size);
+    } else {
+      clear();
+    }
+  }
+
   std::vector<uint8_t> toVector() const {
     if (!data_) {
       return {};
