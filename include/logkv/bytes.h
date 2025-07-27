@@ -24,14 +24,14 @@ constexpr std::array<int, 256> createHexLookup() {
     lookup[static_cast<unsigned char>(c)] = c - 'A' + 10;
   return lookup;
 }
-static const char hexEncodeLookupUpper[] = "0123456789ABCDEF";
-static const char hexEncodeLookupLower[] = "0123456789abcdef";
-static constexpr std::array<int, 256> hexLookup = createHexLookup();
+inline const char hexEncodeLookupUpper[] = "0123456789ABCDEF";
+inline const char hexEncodeLookupLower[] = "0123456789abcdef";
+inline constexpr std::array<int, 256> hexLookup = createHexLookup();
 } // namespace logkv_detail
 
 namespace logkv {
 
-void encodeHex(char* dest, size_t dest_len, const char* src, size_t src_len,
+inline void encodeHex(char* dest, size_t dest_len, const char* src, size_t src_len,
                bool upper = false) {
   if (!src_len) {
     return;
@@ -52,7 +52,7 @@ void encodeHex(char* dest, size_t dest_len, const char* src, size_t src_len,
   }
 }
 
-void decodeHex(char* dest, size_t dest_len, const char* src, size_t src_len) {
+inline void decodeHex(char* dest, size_t dest_len, const char* src, size_t src_len) {
   if (!src_len) {
     return;
   }
