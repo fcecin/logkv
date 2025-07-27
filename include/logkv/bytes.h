@@ -389,7 +389,7 @@ public:
   }
 };
 
-size_t hash_value(const Bytes& b) {
+inline size_t hash_value(const Bytes& b) {
   size_t hv = 0xcbf29ce484222325ULL;
   const char* data = b.data();
   size_t size = b.size();
@@ -420,7 +420,7 @@ public:
   Hash(Bytes&& other) noexcept : Bytes(std::move(other)) {}
 };
 
-size_t hash_value(const Hash& h) {
+inline size_t hash_value(const Hash& h) {
   size_t hv = 0;
   size_t avail = h.size();
   size_t count = avail < sizeof(size_t) ? avail : sizeof(size_t);
