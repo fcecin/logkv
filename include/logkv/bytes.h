@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <span>
 
 #include "object.h"
 
@@ -31,8 +32,8 @@ inline constexpr std::array<int, 256> hexLookup = createHexLookup();
 
 namespace logkv {
 
-inline void encodeHex(char* dest, size_t dest_len, const char* src, size_t src_len,
-               bool upper = false) {
+inline void encodeHex(char* dest, size_t dest_len, const char* src,
+                      size_t src_len, bool upper = false) {
   if (!src_len) {
     return;
   }
@@ -52,7 +53,8 @@ inline void encodeHex(char* dest, size_t dest_len, const char* src, size_t src_l
   }
 }
 
-inline void decodeHex(char* dest, size_t dest_len, const char* src, size_t src_len) {
+inline void decodeHex(char* dest, size_t dest_len, const char* src,
+                      size_t src_len) {
   if (!src_len) {
     return;
   }
@@ -190,7 +192,7 @@ public:
     }
   }
 
-  Bytes(char* data, size_t size) {
+  Bytes(const void* data, size_t size) {
     if (data == nullptr || size == 0) {
       data_ = nullptr;
       size_ = 0;
@@ -200,6 +202,9 @@ public:
       std::memcpy(data_, data, size);
     }
   }
+
+  explicit Bytes(std::span<const std::byte> data)
+      : Bytes(data.data(), data.size()) {}
 
   Bytes(Bytes&& other) noexcept : data_(other.data_), size_(other.size_) {
     other.data_ = nullptr;
