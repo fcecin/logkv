@@ -1,14 +1,15 @@
 #include <boost/unordered/unordered_flat_map.hpp>
+
+#include <logkv/store.h>
+using namespace logkv;
+
+#include <logkv/autoser/bytes.h>
+
 #include <chrono>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <random>
-#include <string>
-#include <vector>
-
-#include <logkv/store.h>
-using namespace logkv;
 
 constexpr size_t NUM_PRECOMPUTED_KEYS = 100'000;
 constexpr size_t NUM_PRECOMPUTED_VALUES = 65536;

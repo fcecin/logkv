@@ -1,14 +1,14 @@
-#ifndef _LOGKV_H_
-#define _LOGKV_H_
+#ifndef _LOGKV_STORE_H_
+#define _LOGKV_STORE_H_
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
-#include <iostream>
 #include <thread>
 #include <vector>
 
-#include "bytes.h"
+#include <logkv/bytes.h>
+#include <logkv/serializer.h>
 
 namespace logkv {
 
@@ -26,6 +26,10 @@ enum StoreFlags {
  * `logkv::Store` is a wrapper around any K,V container M that optionally logs
  * K,V mapping changes to an event log and knows how to load and save M
  * snapshots from and to persisted storage.
+ *
+ * NOTE: An absent key K is equivalent to a key K mapped to an empty value V.
+ * `update()` keeps K,V mappings with an empty value V, but keys K with an empty
+ * value V are _not_ stored in snapshots (`save()`).
  */
 template <template <typename, typename> class M, typename K, typename V>
 class Store {
@@ -86,7 +90,7 @@ private:
   template <typename T> size_t readObject(FILE* f, T& out) {
     const char* inptr = buffer_.data() + readOffset_;
     size_t avail = writeOffset_ - readOffset_;
-    size_t used = out.deserialize(inptr, avail);
+    size_t used = logkv::serializer<T>::read(inptr, avail, out);
     bool underflow = used > avail;
     if (underflow) {
       if (buffer_.size() < used) {
@@ -117,7 +121,8 @@ private:
 
   template <typename T> size_t writeObject(FILE* f, const T& obj) {
     size_t avail = buffer_.size() - writeOffset_;
-    size_t used = obj.serialize(buffer_.data() + writeOffset_, avail);
+    size_t used =
+      logkv::serializer<T>::write(buffer_.data() + writeOffset_, avail, obj);
     bool overflow = used > avail;
     if (overflow) {
       if (writeOffset_ > 0) {
@@ -155,7 +160,7 @@ private:
         totalBytesRead += readObject(f, key);
         V value;
         totalBytesRead += readObject(f, value);
-        if (value.empty()) {
+        if (logkv::serializer<V>::is_empty(value)) {
           objects_.erase(std::move(key));
         } else {
           objects_[std::move(key)] = std::move(value);
@@ -187,7 +192,7 @@ public:
   Store(const std::string& dir, int flags = StoreFlags::none,
         size_t bufferSize = defaultBufferSize)
       : flags_(flags), buffer_(bufferSize) {
-    if (!emptyValue_.empty()) {
+    if (!logkv::serializer<V>::is_empty(emptyValue_)) {
       throw std::runtime_error("default-constructed value type is not empty()");
     }
     setDirectory(dir);

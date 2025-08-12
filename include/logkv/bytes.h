@@ -4,12 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
-#include <string>
-#include <vector>
 #include <span>
-
-#include "object.h"
 
 namespace logkv_detail {
 constexpr std::array<int, 256> createHexLookup() {
@@ -85,47 +80,12 @@ inline void decodeHex(char* dest, size_t dest_len, const char* src,
  * A dynamic byte array utility class that can be used as K, V in
  * logkv::Store.
  */
-class Bytes : public Object {
+class Bytes {
 private:
   char* data_;
   size_t size_;
 
 public:
-  virtual bool empty() const { return !size_; }
-
-  virtual size_t serialize(char* dest, size_t size) const {
-    size_t reqsz = size_ + sizeof(size_t);
-    if (size >= reqsz) {
-      memcpy(dest, &size_, sizeof(size_t));
-      if (size_ > 0) {
-        memcpy(dest + sizeof(size_t), data_, size_);
-      }
-    }
-    return reqsz;
-  }
-
-  virtual size_t deserialize(const char* src, size_t size) {
-    if (size < sizeof(size_t)) {
-      return sizeof(size_t);
-    }
-    size_t tmpsz;
-    memcpy(&tmpsz, src, sizeof(size_t));
-    size_t reqsz = tmpsz + sizeof(size_t);
-    if (tmpsz) {
-      if (size >= reqsz) {
-        if (size_ != tmpsz) {
-          size_ = tmpsz;
-          delete[] data_;
-          data_ = new char[size_];
-        }
-        memcpy(data_, src + sizeof(size_t), size_);
-      }
-    } else {
-      clear();
-    }
-    return reqsz;
-  }
-
   static Bytes decodeHex(const char* hexData, size_t hexSize) {
     Bytes result(hexSize / 2);
     logkv::decodeHex(result.data(), result.size(), hexData, hexSize);
@@ -328,6 +288,8 @@ public:
   char* data() const { return data_; }
 
   size_t size() const { return size_; }
+
+  bool empty() const { return !size_; }
 
   void clear() {
     delete[] data_;

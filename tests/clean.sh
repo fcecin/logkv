@@ -5,3 +5,5 @@ rm -rf hellodata
 rm -f hello
 rm -f testbytes
 rm -f teststore
+rm -f autoser
+rm -f testautoser

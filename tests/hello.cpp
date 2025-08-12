@@ -1,9 +1,12 @@
 #include <logkv/store.h>
 using namespace logkv;
 
+#include <logkv/autoser/bytes.h>
+
 #include <boost/unordered/unordered_flat_map.hpp>
 
 #include <iostream>
+
 int main(int argc, char* argv[]) {
   const std::string dirStr = "./hellodata";
 

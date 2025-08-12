@@ -1,15 +1,8 @@
-#include <algorithm>
+#include <logkv/autoser/bytes.h>
+
 #include <cassert>
-#include <compare>
-#include <cstring>
-#include <functional>
 #include <iomanip>
 #include <iostream>
-#include <stdexcept>
-#include <string>
-#include <vector>
-
-#include <logkv/bytes.h>
 
 void printBytes(const logkv::Bytes& b, const std::string& label = "") {
   if (!label.empty()) {
@@ -352,7 +345,11 @@ void test_comparison_operators() {
   logkv::Bytes b3("abd");
   logkv::Bytes b4("ab");
   logkv::Bytes b5("abcd");
+  logkv::Bytes b6("bbc");
   logkv::Bytes empty1, empty2;
+
+  assert(b1 < b6);
+  assert((b1 <=> b6) == std::strong_ordering::less);
 
   assert(b1 == b2);
   assert(!(b1 == b3));
@@ -465,56 +462,76 @@ void test_hex_encode_decode() {
   std::cout << "test_hex_encode_decode PASSED." << std::endl;
 }
 
+#include <logkv/autoser.h> // Make sure this is included for VarUint
+
 void test_serialize_deserialize() {
   std::cout << "Running test_serialize_deserialize..." << std::endl;
+
+  using BytesSerializer = logkv::serializer<logkv::Bytes>;
+  using VarUintSerializer = logkv::serializer<logkv::VarUint<uint64_t>>;
+
   logkv::Bytes b_orig("serialize_me");
 
-  size_t req_size = b_orig.serialize(nullptr, 0);
-  assert(req_size == b_orig.size() + sizeof(size_t));
+  size_t req_size = BytesSerializer::get_size(b_orig);
+  size_t expected_size =
+    b_orig.size() + VarUintSerializer::get_size(b_orig.size());
+  assert(req_size == expected_size);
 
   std::vector<char> buffer(req_size);
-  size_t written_size = b_orig.serialize(buffer.data(), buffer.size());
+  size_t written_size =
+    BytesSerializer::write(buffer.data(), buffer.size(), b_orig);
   assert(written_size == req_size);
 
   logkv::Bytes b_deserial;
-  size_t read_size = b_deserial.deserialize(buffer.data(), buffer.size());
+  size_t read_size =
+    BytesSerializer::read(buffer.data(), buffer.size(), b_deserial);
   assert(read_size == req_size);
   assert(b_deserial == b_orig);
 
   logkv::Bytes b_empty_orig;
-  req_size = b_empty_orig.serialize(nullptr, 0);
-  assert(req_size == 0 + sizeof(size_t));
+  req_size = BytesSerializer::get_size(b_empty_orig);
+  expected_size = VarUintSerializer::get_size(0);
+  assert(req_size == expected_size);
+  assert(req_size == 1);
+
   std::vector<char> empty_buffer(req_size);
-  written_size =
-    b_empty_orig.serialize(empty_buffer.data(), empty_buffer.size());
+  written_size = BytesSerializer::write(empty_buffer.data(),
+                                        empty_buffer.size(), b_empty_orig);
   assert(written_size == req_size);
 
   logkv::Bytes b_empty_deserial;
-  read_size =
-    b_empty_deserial.deserialize(empty_buffer.data(), empty_buffer.size());
+  read_size = BytesSerializer::read(empty_buffer.data(), empty_buffer.size(),
+                                    b_empty_deserial);
   assert(read_size == req_size);
   assert(b_empty_deserial.empty());
   assert(b_empty_deserial == b_empty_orig);
 
-  logkv::Bytes b_orig_long("a_very_long_string_for_serialization");
-  req_size = b_orig_long.serialize(nullptr, 0);
+  logkv::Bytes b_orig_long(
+    "a_very_long_string_for_serialization_to_test_varuint");
+  req_size = BytesSerializer::get_size(b_orig_long);
   std::vector<char> full_buffer_long(req_size);
-  b_orig_long.serialize(full_buffer_long.data(), full_buffer_long.size());
+  BytesSerializer::write(full_buffer_long.data(), full_buffer_long.size(),
+                         b_orig_long);
 
   logkv::Bytes b_partial_deserial;
-  size_t partial_buffer_size = sizeof(size_t);
-  read_size = b_partial_deserial.deserialize(full_buffer_long.data(),
-                                             partial_buffer_size);
+  const size_t len_prefix_size =
+    VarUintSerializer::get_size(b_orig_long.size());
+
+  read_size = BytesSerializer::read(full_buffer_long.data(), len_prefix_size,
+                                    b_partial_deserial);
   assert(read_size == req_size);
   assert(b_partial_deserial.empty());
 
-  read_size =
-    b_partial_deserial.deserialize(full_buffer_long.data(), sizeof(size_t) - 1);
-  assert(read_size == sizeof(size_t));
-  assert(b_partial_deserial.empty());
+  if (len_prefix_size > 0) {
+    read_size = BytesSerializer::read(full_buffer_long.data(),
+                                      len_prefix_size - 1, b_partial_deserial);
+    assert(read_size == len_prefix_size);
+    assert(b_partial_deserial.empty());
+  }
 
   logkv::Bytes b_reuse("short");
-  b_reuse.deserialize(full_buffer_long.data(), full_buffer_long.size());
+  BytesSerializer::read(full_buffer_long.data(), full_buffer_long.size(),
+                        b_reuse);
   assert(b_reuse == b_orig_long);
 
   std::cout << "test_serialize_deserialize PASSED." << std::endl;

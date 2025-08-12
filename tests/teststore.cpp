@@ -1,18 +1,11 @@
-#include <algorithm>
-#include <cassert>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <functional>
-#include <iomanip>
-#include <iostream>
-#include <map>
-#include <stdexcept>
-#include <string>
-#include <thread>
-#include <vector>
-
 #include <logkv/store.h>
+
+#include <logkv/autoser/asio.h>
+#include <logkv/autoser/associative.h>
+#include <logkv/autoser/bytes.h>
+#include <logkv/autoser/pushback.h>
+
+#include <iostream>
 
 using TestStore = logkv::Store<std::map, logkv::Bytes, logkv::Bytes>;
 
@@ -47,10 +40,7 @@ void cleanup_test_directory(const std::string& full_dir_path_str) {
 void cleanup_base_test_directory() {
   std::filesystem::path base_path = TEST_BASE_DIR;
   if (std::filesystem::exists(base_path)) {
-    if (std::filesystem::is_empty(base_path)) {
-      std::filesystem::remove(base_path);
-    } else {
-    }
+    std::filesystem::remove_all(base_path);
   }
 }
 
@@ -483,7 +473,131 @@ void test_store_buffer_resizing() {
 
   std::cout << "test_store_buffer_resizing PASSED." << std::endl;
 }
+void test_store_key_types() {
+  std::cout << "Running test_store_key_types..." << std::endl;
+  std::string test_name = "key_value_types";
+  std::string dir_path = setup_test_directory(test_name);
 
+  try {
+    {
+      std::cout << "  Subtest: std::string keys and values..." << std::endl;
+      using StringStore = logkv::Store<std::map, std::string, std::string>;
+
+      std::string key1 = "A";
+      std::string val1 = "B";
+      std::string key2 = "Some larger key";
+      std::string val2 = "Some larger value";
+      std::string key3 = "E";
+      std::string val3 = "";
+      {
+        StringStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+        store.update(key1, val1);
+        store.update(key2, val2);
+        store.update(key3, val3);
+        store.flush();
+
+        auto& objects = store.getObjects();
+        assert(objects.size() == 3);
+        assert(objects.at(key1) == val1);
+        assert(objects.at(key2) == val2);
+        assert(objects.at(key3) == val3);
+
+        // writes the snapshot, which will exclude key3,val3
+        // only two keypairs will be in the snapshot
+        store.save();
+      }
+
+      {
+        StringStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 2);
+        assert(objects.at(key1) == val1);
+        assert(objects.at(key2) == val2);
+      }
+    }
+
+    {
+      std::cout
+        << "  Subtest: std::string keys and std::vector<std::string> values..."
+        << std::endl;
+      using VecStore =
+        logkv::Store<std::map, std::string, std::vector<std::string>>;
+
+      std::string key1 = "user:123:permissions";
+      std::vector<std::string> val1 = {"read", "write", "execute"};
+      std::string key2 = "user:456:aliases";
+      std::vector<std::string> val2 = {"Big John", "Johnny"};
+      std::string key3 = "user:789:history";
+      std::vector<std::string> val3 = {}; // Empty vector
+
+      {
+        VecStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+        store.update(key1, val1);
+        store.update(key2, val2);
+        store.update(key3, val3);
+
+        auto& objects = store.getObjects();
+        assert(objects.size() == 3);
+        assert(objects.at(key1) == val1);
+        assert(objects.at(key2) == val2);
+        assert(objects.at(key3) == val3);
+
+        store.save();
+      }
+
+      {
+        VecStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 2);
+        assert(objects.at(key1).size() == 3);
+        assert(objects.at(key1)[1] == "write");
+        assert(objects.at(key2)[0] == "Big John");
+      }
+    }
+
+    {
+      std::cout << "  Subtest: boost::asio::ip::udp::endpoint keys..."
+                << std::endl;
+      using Socket = boost::asio::ip::udp::endpoint;
+      using SocketStore = logkv::Store<std::map, Socket, std::string>;
+
+      Socket key1(boost::asio::ip::make_address("1.2.3.4"), 5);
+      Socket key2(boost::asio::ip::make_address("6.7.8.9"), 10);
+      std::string val1 = "server-alpha";
+      std::string val2 = "server-beta";
+      {
+        SocketStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+        store.update(key1, val1);
+        store.update(key2, val2);
+
+        assert(store.getObjects().size() == 2);
+        store.save();
+      }
+
+      {
+        SocketStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 2);
+
+        Socket key1(boost::asio::ip::make_address("1.2.3.4"), 5);
+        Socket key2(boost::asio::ip::make_address("6.7.8.9"), 10);
+
+        assert(objects.at(key1) == "server-alpha");
+        assert(objects.at(key2) == "server-beta");
+      }
+    }
+
+  } catch (...) {
+    cleanup_test_directory(dir_path);
+    throw;
+  }
+
+  cleanup_test_directory(dir_path);
+  std::cout << "test_store_key_types PASSED." << std::endl;
+}
 int main() {
 
   if (!std::filesystem::exists(TEST_BASE_DIR)) {
@@ -499,6 +613,7 @@ int main() {
     test_store_load_snapshot_then_newer_events();
     test_store_operator_access();
     test_store_buffer_resizing();
+    test_store_key_types();
 
     std::cout << "\nALL Store tests PASSED successfully!" << std::endl;
 
