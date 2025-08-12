@@ -7,6 +7,8 @@
 
 #include <iostream>
 
+#include <boost/unordered/unordered_flat_map.hpp>
+
 using TestStore = logkv::Store<std::map, logkv::Bytes, logkv::Bytes>;
 
 const std::string TEST_BASE_DIR = "logkv_store_test_run_data";
@@ -507,6 +509,60 @@ void test_store_key_types() {
         // only two keypairs will be in the snapshot
         store.save();
       }
+    }
+
+    {
+      std::cout << "  Subtest: unordered_map logkv::Bytes keys and values..." << std::endl;
+      using StringStore = logkv::Store<std::unordered_map, logkv::Bytes, logkv::Bytes>;
+
+      logkv::Bytes key1("key 1");
+      logkv::Bytes key2("value 1");
+      logkv::Bytes val1("key 2");
+      logkv::Bytes val2("value 2");
+      {
+        StringStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+        store.update(key1, val1);
+        store.update(key2, val2);
+        store.flush();
+
+        auto& objects = store.getObjects();
+        assert(objects.size() == 2);
+        assert(objects.at(key1) == val1);
+        assert(objects.at(key2) == val2);
+        store.save();
+      }
+
+      {
+        StringStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 2);
+        assert(objects.at(key1) == val1);
+        assert(objects.at(key2) == val2);
+      }
+    }
+
+    {
+      std::cout << "  Subtest: boost_unordered_flat_map logkv::Bytes keys and values..." << std::endl;
+      using StringStore = logkv::Store<boost::unordered_flat_map, logkv::Bytes, logkv::Bytes>;
+
+      logkv::Bytes key1("key 1");
+      logkv::Bytes key2("value 1");
+      logkv::Bytes val1("key 2");
+      logkv::Bytes val2("value 2");
+      {
+        StringStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+        store.update(key1, val1);
+        store.update(key2, val2);
+        store.flush();
+
+        auto& objects = store.getObjects();
+        assert(objects.size() == 2);
+        assert(objects.at(key1) == val1);
+        assert(objects.at(key2) == val2);
+        store.save();
+      }
 
       {
         StringStore reloaded_store(dir_path);
@@ -558,10 +614,43 @@ void test_store_key_types() {
     }
 
     {
-      std::cout << "  Subtest: boost::asio::ip::udp::endpoint keys..."
+      std::cout << "  Subtest: unordered_map boost::asio::ip::udp::endpoint keys..."
                 << std::endl;
       using Socket = boost::asio::ip::udp::endpoint;
-      using SocketStore = logkv::Store<std::map, Socket, std::string>;
+      using SocketStore = logkv::Store<std::unordered_map, Socket, std::string>;
+
+      Socket key1(boost::asio::ip::make_address("1.2.3.4"), 5);
+      Socket key2(boost::asio::ip::make_address("6.7.8.9"), 10);
+      std::string val1 = "server-alpha";
+      std::string val2 = "server-beta";
+      {
+        SocketStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+        store.update(key1, val1);
+        store.update(key2, val2);
+
+        assert(store.getObjects().size() == 2);
+        store.save();
+      }
+
+      {
+        SocketStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 2);
+
+        Socket key1(boost::asio::ip::make_address("1.2.3.4"), 5);
+        Socket key2(boost::asio::ip::make_address("6.7.8.9"), 10);
+
+        assert(objects.at(key1) == "server-alpha");
+        assert(objects.at(key2) == "server-beta");
+      }
+    }
+
+    {
+      std::cout << "  Subtest: boost::unordered_flat_map boost::asio::ip::udp::endpoint keys..."
+                << std::endl;
+      using Socket = boost::asio::ip::udp::endpoint;
+      using SocketStore = logkv::Store<boost::unordered_flat_map, Socket, std::string>;
 
       Socket key1(boost::asio::ip::make_address("1.2.3.4"), 5);
       Socket key2(boost::asio::ip::make_address("6.7.8.9"), 10);

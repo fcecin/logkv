@@ -124,13 +124,15 @@ void test_serialization(const T& original_obj, const std::string& test_name) {
   }
   std::vector<char> buffer(required_size);
   if (required_size > 0) {
-    size_t bytes_written = logkv::serializer<T>::write(buffer.data(), buffer.size(), original_obj);
+    size_t bytes_written =
+      logkv::serializer<T>::write(buffer.data(), buffer.size(), original_obj);
     std::cout << "Bytes written: " << bytes_written << std::endl;
     assert(bytes_written == required_size);
   }
   T deserialized_obj;
   if (required_size > 0) {
-    size_t bytes_read = logkv::serializer<T>::read(buffer.data(), buffer.size(), deserialized_obj);
+    size_t bytes_read = logkv::serializer<T>::read(buffer.data(), buffer.size(),
+                                                   deserialized_obj);
     std::cout << "Bytes read: " << bytes_read << std::endl;
     assert(bytes_read == required_size);
   }
@@ -160,8 +162,8 @@ int main(int argc, char* argv[]) {
 
     // 2. Test a default (empty) TestObject
     TestObject empty_obj;
-    assert(logkv::serializer<TestObject>::is_empty(empty_obj));
     test_serialization(empty_obj, "Empty TestObject");
+    assert(logkv::serializer<TestObject>::is_empty(empty_obj));
   }
 
   std::cout << "All autoser tests passed!\n" << std::endl;

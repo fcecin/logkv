@@ -193,7 +193,9 @@ public:
         size_t bufferSize = defaultBufferSize)
       : flags_(flags), buffer_(bufferSize) {
     if (!logkv::serializer<V>::is_empty(emptyValue_)) {
-      throw std::runtime_error("default-constructed value type is not empty()");
+      throw std::runtime_error(
+        std::string("detected a non-empty default-constructed value for a logkv::Store mapped type: ") +
+        typeid(V).name());
     }
     setDirectory(dir);
   }

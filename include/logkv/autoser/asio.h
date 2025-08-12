@@ -101,4 +101,30 @@ struct composite_traits<boost::asio::ip::basic_endpoint<Protocol>> {
 
 }
 
+// ----------------------------------------------------------------------------
+// Support for boost::asio::ip types as boost unordered container keys
+// (e.g. logkv::Store<boost::unordered_flat_map, boost::asio::ip::address, V>)
+// ----------------------------------------------------------------------------
+
+#include <boost/container_hash/hash.hpp>
+namespace boost::asio::ip {
+inline std::size_t hash_value(const address& addr) {
+  std::size_t seed = 0;
+  if (addr.is_v4()) {
+    auto bytes = addr.to_v4().to_bytes();
+    boost::hash_range(seed, bytes.begin(), bytes.end());
+  } else { // if addr.is_v6()
+    auto bytes = addr.to_v6().to_bytes();
+    boost::hash_range(seed, bytes.begin(), bytes.end());
+  }
+  return seed;
+}
+template <typename Protocol>
+inline std::size_t hash_value(const basic_endpoint<Protocol>& ep) {
+  std::size_t seed = hash_value(ep.address());
+  boost::hash_combine(seed, ep.port());
+  return seed;
+}
+}
+
 #endif
