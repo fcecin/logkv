@@ -5,5 +5,6 @@ rm -rf hellodata
 rm -f hello
 rm -f testbytes
 rm -f teststore
+rm -f teststore_nosanitizer
 rm -f autoser
 rm -f testautoser

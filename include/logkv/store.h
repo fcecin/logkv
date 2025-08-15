@@ -43,7 +43,7 @@ private:
   bool loaded_ = false;
   uint64_t time_ = 0;
   std::string dir_;
-  V emptyValue_;
+  V emptyValue_{};
 
   static constexpr size_t defaultBufferSize = 1 << 19;
 

@@ -679,6 +679,55 @@ void test_store_key_types() {
       }
     }
 
+    {
+      using ArrayHash = std::array<uint8_t, 32>;
+      std::cout << "  Subtest: array<uint8_t> store" << std::endl;
+      using ArrStore = logkv::Store<boost::unordered_flat_map, ArrayHash, ArrayHash>;
+
+      ArrayHash key1, key2, val1, val2;
+      key1.fill(1);
+      key2.fill(2);
+      val1.fill(3);
+      val2.fill(0);
+      {
+        ArrStore store(dir_path, logkv::createDir | logkv::deleteData);
+        store.update(key1, val1);
+        store.update(key2, val2);
+        assert(store.getObjects().size() == 2);
+        store.save();
+      }
+
+      {
+        ArrStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 1);
+        assert(objects.at(key1) == val1);
+      }
+    }
+
+    {
+      std::cout << "  Subtest: uint64_t store" << std::endl;
+      using IntStore = logkv::Store<boost::unordered_flat_map, uint64_t, uint64_t>;
+      uint64_t key1 = 100;
+      uint64_t key2 = 200;
+      uint64_t val1 = 300;
+      uint64_t val2 = 0;
+      {
+        IntStore store(dir_path, logkv::createDir | logkv::deleteData);
+        store.update(key1, val1);
+        store.update(key2, val2);
+        assert(store.getObjects().size() == 2);
+        store.save();
+      }
+
+      {
+        IntStore reloaded_store(dir_path);
+        auto& objects = reloaded_store.getObjects();
+        assert(objects.size() == 1);
+        assert(objects.at(key1) == val1);
+      }
+    }
+
   } catch (...) {
     cleanup_test_directory(dir_path);
     throw;
