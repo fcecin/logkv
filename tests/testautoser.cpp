@@ -409,6 +409,52 @@ void test_container_sequential_other() {
   test_type_serialization(std::deque<int>());
 }
 
+void test_container_std_span() {
+  {
+    std::vector<uint8_t> original_vec = {1, 2, 3, 4, 5, 6, 7, 8};
+    std::span<const uint8_t> src_span(original_vec);
+    std::vector<char> buffer(
+      logkv::serializer<decltype(src_span)>::get_size(src_span));
+    logkv::serializer<decltype(src_span)>::write(buffer.data(), buffer.size(),
+                                                 src_span);
+    std::vector<uint8_t> dest_vec(original_vec.size(), 0);
+    std::span<uint8_t> dest_span(dest_vec);
+    logkv::serializer<decltype(dest_span)>::read(buffer.data(), buffer.size(),
+                                                 dest_span);
+    ASSERT_EQ(original_vec, dest_vec);
+  }
+  {
+    uint8_t original_arr[] = {10, 20, 30, 40};
+    std::span<const uint8_t> src_span(original_arr);
+    std::vector<char> buffer(
+      logkv::serializer<decltype(src_span)>::get_size(src_span));
+    logkv::serializer<decltype(src_span)>::write(buffer.data(), buffer.size(),
+                                                 src_span);
+    uint8_t dest_arr[4] = {0};
+    std::span<uint8_t> dest_span(dest_arr);
+    logkv::serializer<decltype(dest_span)>::read(buffer.data(), buffer.size(),
+                                                 dest_span);
+    ASSERT_TRUE(std::equal(std::begin(original_arr), std::end(original_arr),
+                           std::begin(dest_arr)));
+  }
+  {
+    logkv::Bytes original_bytes("some_raw_data");
+    std::span<const uint8_t> src_span(
+      reinterpret_cast<const uint8_t*>(original_bytes.data()),
+      original_bytes.size());
+    std::vector<char> buffer(
+      logkv::serializer<decltype(src_span)>::get_size(src_span));
+    logkv::serializer<decltype(src_span)>::write(buffer.data(), buffer.size(),
+                                                 src_span);
+    logkv::Bytes dest_bytes(original_bytes.size());
+    std::span<uint8_t> dest_span(reinterpret_cast<uint8_t*>(dest_bytes.data()),
+                                 dest_bytes.size());
+    logkv::serializer<decltype(dest_span)>::read(buffer.data(), buffer.size(),
+                                                 dest_span);
+    ASSERT_EQ(original_bytes, dest_bytes);
+  }
+}
+
 void test_asio_ip_address() {
   test_type_serialization<boost::asio::ip::address>(
     boost::asio::ip::make_address("192.168.1.1"));
@@ -607,6 +653,7 @@ int main(int argc, char* argv[]) {
   RUN_TEST(test_container_std_vector_complex);
   RUN_TEST(test_container_associative);
   RUN_TEST(test_container_sequential_other);
+  RUN_TEST(test_container_std_span);
 
   RUN_TEST(test_asio_ip_address);
   RUN_TEST(test_asio_tcp_endpoint);

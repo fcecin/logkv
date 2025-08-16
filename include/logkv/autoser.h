@@ -11,6 +11,7 @@
 #include <limits>
 #include <string>
 #include <tuple>
+#include <span>
 
 /**
  * Automatic serialization support.
@@ -100,8 +101,8 @@ public:
 
 class Writer {
 public:
-  Writer(char* dest, size_t size)
-      : ptr_(dest), initial_ptr_(dest), remaining_(size) {}
+  Writer(void* dest, size_t size)
+      : ptr_(static_cast<char*>(dest)), initial_ptr_(ptr_), remaining_(size) {}
   template <typename T> void write(const T& val) {
     size_t bytes_written = serializer<T>::write(ptr_, remaining_, val);
     if (bytes_written > remaining_) {
@@ -120,8 +121,8 @@ private:
 
 class Reader {
 public:
-  Reader(const char* src, size_t size)
-      : ptr_(src), initial_ptr_(src), remaining_(size) {}
+  Reader(const void* src, size_t size)
+      : ptr_(static_cast<const char*>(src)), initial_ptr_(ptr_), remaining_(size) {}
   template <typename T> void read(T& val) {
     size_t bytes_read = serializer<T>::read(ptr_, remaining_, val);
     if (bytes_read > remaining_) {
@@ -233,6 +234,40 @@ template <typename T> struct serializer<VarUint<T>> {
   }
 };
 
+// ----------------------------------------------------------------------------
+// std::span<T>, where sizeof(T) == 1 && std::is_trivial_v(T)
+// Does not encode size; span size is used for writing and reading.
+// Empty state means span size is zero.
+// ----------------------------------------------------------------------------
+
+template <typename T>
+struct serializer<std::span<T>,
+                  std::enable_if_t<sizeof(T) == 1 && std::is_trivial_v<T>>> {
+  static size_t get_size(const std::span<T>& span) { return span.size(); }
+  static bool is_empty(const std::span<T>& span) { return span.empty(); }
+  static size_t write(char* dest, size_t size, const std::span<T>& span) {
+    if (size < span.size()) {
+      return span.size();
+    }
+    std::memcpy(dest, span.data(), span.size());
+    return span.size();
+  }
+
+  static size_t read(const char* src, size_t size, std::span<T>& span) {
+    if (size < span.size()) {
+      return span.size();
+    }
+    std::memcpy(span.data(), src, span.size());
+    return span.size();
+  }
+};
+
+// ----------------------------------------------------------------------------
+// std::array<T, N>, where sizeof(T) == 1 && std::is_trivial_v(T)
+// Does not encode size; array size is used for writing and reading.
+// Empty state means all bytes in the array are set to zero.
+// ----------------------------------------------------------------------------
+
 template <typename T, size_t N>
 struct serializer<std::array<T, N>,
                   std::enable_if_t<sizeof(T) == 1 && std::is_trivial_v<T>>> {
@@ -259,6 +294,7 @@ struct serializer<std::array<T, N>,
 
 // ----------------------------------------------------------------------------
 // std::array<T, N> for any type T with a logkv::serializer<T>
+// Empty state means all elements are in the empty state.
 // ----------------------------------------------------------------------------
 
 template <typename T, size_t N>
