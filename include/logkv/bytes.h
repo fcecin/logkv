@@ -291,6 +291,14 @@ public:
 
   bool empty() const { return !size_; }
 
+  std::span<std::byte> span() {
+    return {reinterpret_cast<std::byte*>(data_), size_};
+  }
+
+  std::span<const std::byte> span() const {
+    return {reinterpret_cast<const std::byte*>(data_), size_};
+  }
+
   void clear() {
     delete[] data_;
     data_ = nullptr;
