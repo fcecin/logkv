@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
             << "..." << std::endl;
   std::vector<Hash> key_cache(NUM_PRECOMPUTED_KEYS);
   for (size_t i = 0; i < NUM_PRECOMPUTED_KEYS; ++i) {
-    key_cache[i] = randomBytes(KEY_SIZE, rng);
+    key_cache[i] = bytesToHash(randomBytes(KEY_SIZE, rng));
   }
 
   std::cout << "Making " << NUM_PRECOMPUTED_VALUES

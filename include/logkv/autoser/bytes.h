@@ -73,14 +73,6 @@ struct serializer<std::vector<T>,
                   std::enable_if_t<sizeof(T) == 1 && std::is_trivial_v<T>>>
     : public logkv::DynamicBytesSerializer<std::vector<T>> {};
 
-template <>
-struct serializer<logkv::Bytes>
-    : public logkv::DynamicBytesSerializer<logkv::Bytes> {};
-
-template <>
-struct serializer<logkv::Hash>
-    : public logkv::DynamicBytesSerializer<logkv::Hash> {};
-
 } // namespace logkv
 
 #endif

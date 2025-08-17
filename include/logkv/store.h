@@ -7,8 +7,7 @@
 #include <thread>
 #include <vector>
 
-#include <logkv/bytes.h>
-#include <logkv/serializer.h>
+#include <logkv/autoser/bytes.h>
 
 namespace logkv {
 

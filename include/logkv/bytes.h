@@ -80,289 +80,7 @@ inline void decodeHex(char* dest, size_t dest_len, const char* src,
  * A dynamic byte array utility class that can be used as K, V in
  * logkv::Store.
  */
-class Bytes {
-private:
-  char* data_;
-  size_t size_;
-
-public:
-  static Bytes decodeHex(const char* hexData, size_t hexSize) {
-    Bytes result(hexSize / 2);
-    logkv::decodeHex(result.data(), result.size(), hexData, hexSize);
-    return result;
-  }
-
-  static Bytes decodeHex(const std::string& hexStr) {
-    return decodeHex(hexStr.data(), hexStr.size());
-  }
-
-  static Bytes decodeHex(const Bytes& hexBytes) {
-    return decodeHex(hexBytes.data(), hexBytes.size());
-  }
-
-  static Bytes encodeHex(const char* data, size_t size, bool upper = false) {
-    Bytes result(size * 2);
-    logkv::encodeHex(result.data(), result.size(), data, size, upper);
-    return result;
-  }
-
-  static Bytes encodeHex(const std::string& str, bool upper = false) {
-    return encodeHex(str.data(), str.size(), upper);
-  }
-
-  static Bytes encodeHex(const Bytes& bytes, bool upper = false) {
-    return encodeHex(bytes.data(), bytes.size(), upper);
-  }
-
-  Bytes() : data_(nullptr), size_(0) {}
-
-  Bytes(const size_t& size) {
-    if (size) {
-      data_ = new char[size];
-    } else {
-      data_ = nullptr;
-    }
-    size_ = size;
-  }
-
-  Bytes(const Bytes& other) : size_(other.size_) {
-    if (size_ > 0) {
-      data_ = new char[size_];
-      std::memcpy(data_, other.data_, size_);
-    } else {
-      data_ = nullptr;
-    }
-  }
-
-  Bytes(const std::vector<uint8_t>& vec) : size_(vec.size()) {
-    if (size_ > 0) {
-      data_ = new char[size_];
-      std::memcpy(data_, reinterpret_cast<const char*>(vec.data()), size_);
-    } else {
-      data_ = nullptr;
-    }
-  }
-
-  Bytes(const std::string& str) : size_(str.size()) {
-    if (size_ > 0) {
-      data_ = new char[size_];
-      std::memcpy(data_, str.data(), size_);
-    } else {
-      data_ = nullptr;
-    }
-  }
-
-  Bytes(const void* data, size_t size) {
-    if (data == nullptr || size == 0) {
-      data_ = nullptr;
-      size_ = 0;
-    } else {
-      data_ = new char[size];
-      size_ = size;
-      std::memcpy(data_, data, size);
-    }
-  }
-
-  explicit Bytes(std::span<const std::byte> data)
-      : Bytes(data.data(), data.size()) {}
-
-  Bytes(Bytes&& other) noexcept : data_(other.data_), size_(other.size_) {
-    other.data_ = nullptr;
-    other.size_ = 0;
-  }
-
-  virtual ~Bytes() { delete[] data_; }
-
-  Bytes& operator=(const Bytes& other) {
-    if (this != &other) {
-      if (other.size_ > 0) {
-        if (size_ != other.size_) {
-          size_ = other.size_;
-          delete[] data_;
-          data_ = new char[size_];
-        }
-        std::memcpy(data_, other.data_, size_);
-      } else {
-        delete[] data_;
-        data_ = nullptr;
-        size_ = 0;
-      }
-    }
-    return *this;
-  }
-
-  Bytes& operator=(const std::vector<uint8_t>& vec) {
-    size_t vecSize = vec.size();
-    if (vecSize > 0) {
-      if (size_ != vecSize) {
-        size_ = vecSize;
-        delete[] data_;
-        data_ = new char[size_];
-      }
-      std::memcpy(data_, reinterpret_cast<const char*>(vec.data()), size_);
-    } else {
-      delete[] data_;
-      data_ = nullptr;
-      size_ = 0;
-    }
-    return *this;
-  }
-
-  Bytes& operator=(const std::string& str) {
-    size_t strSize = str.size();
-    if (strSize > 0) {
-      if (size_ != strSize) {
-        size_ = strSize;
-        delete[] data_;
-        data_ = new char[size_];
-      }
-      std::memcpy(data_, str.data(), size_);
-    } else {
-      delete[] data_;
-      data_ = nullptr;
-      size_ = 0;
-    }
-    return *this;
-  }
-
-  Bytes& operator=(Bytes&& other) noexcept {
-    if (this != &other) {
-      delete[] data_;
-      data_ = other.data_;
-      size_ = other.size_;
-      other.data_ = nullptr;
-      other.size_ = 0;
-    }
-    return *this;
-  }
-
-  auto operator<=>(const Bytes& other) const {
-    if (!data_ && !other.data_) {
-      return std::strong_ordering::equal;
-    }
-    if (!data_) {
-      return std::strong_ordering::less;
-    }
-    if (!other.data_) {
-      return std::strong_ordering::greater;
-    }
-    if (auto cmp = size_ <=> other.size_; cmp != 0) {
-      return cmp;
-    }
-    if (size_ == 0) {
-      return std::strong_ordering::equal;
-    }
-    int result = std::memcmp(data_, other.data_, size_);
-    if (result < 0) {
-      return std::strong_ordering::less;
-    }
-    if (result > 0) {
-      return std::strong_ordering::greater;
-    }
-    return std::strong_ordering::equal;
-  }
-
-  bool operator==(const Bytes& other) const {
-    if (!data_ && !other.data_) {
-      return true;
-    }
-    if (!data_ || !other.data_) {
-      return false;
-    }
-    if (size_ != other.size_) {
-      return false;
-    }
-    if (size_ == 0) {
-      return true;
-    }
-    if (data_ == other.data_) {
-      return true;
-    }
-    return std::memcmp(data_, other.data_, size_) == 0;
-  }
-
-  char& operator[](size_t index) { return data_[index]; }
-
-  const char& operator[](size_t index) const { return data_[index]; }
-
-  char* data() const { return data_; }
-
-  size_t size() const { return size_; }
-
-  bool empty() const { return !size_; }
-
-  std::span<std::byte> span() {
-    return {reinterpret_cast<std::byte*>(data_), size_};
-  }
-
-  std::span<const std::byte> span() const {
-    return {reinterpret_cast<const std::byte*>(data_), size_};
-  }
-
-  void clear() {
-    delete[] data_;
-    data_ = nullptr;
-    size_ = 0;
-  }
-
-  void resize(const size_t& size) {
-    if (size_ != size) {
-      if (!size) {
-        delete[] data_;
-        data_ = nullptr;
-        size_ = 0;
-      } else {
-        char* data = new char[size];
-        size_t bytes = std::min(size_, size);
-        if (bytes) {
-          std::memcpy(data, data_, bytes);
-        }
-        delete[] data_;
-        data_ = data;
-        size_ = size;
-      }
-    }
-  }
-
-  void wrap(char* data, size_t size) {
-    delete[] data_;
-    if (size > 0) {
-      data_ = data;
-    } else {
-      delete[] data;
-      data_ = nullptr;
-    }
-    size_ = size;
-  }
-
-  void assign(const char* data, size_t size) {
-    if (size) {
-      if (size_ != size) {
-        delete[] data_;
-        data_ = new char[size];
-        size_ = size;
-      }
-      std::memcpy(data_, data, size);
-    } else {
-      clear();
-    }
-  }
-
-  std::vector<uint8_t> toVector() const {
-    if (!data_) {
-      return {};
-    }
-    return std::vector<uint8_t>(reinterpret_cast<uint8_t*>(data_),
-                                reinterpret_cast<uint8_t*>(data_) + size_);
-  }
-
-  std::string toString() const {
-    if (!data_) {
-      return "";
-    }
-    return std::string(data_, size_);
-  }
-};
+using Bytes = std::vector<char>;
 
 inline size_t hash_value(const Bytes& b) {
   size_t hv = 0xcbf29ce484222325ULL;
@@ -379,21 +97,8 @@ inline size_t hash_value(const Bytes& b) {
  * A version of logkv::Bytes that swaps the FNV container hashing operation with
  * simply copying a part of its own contents (which is already a hash of some
  * sort) to fit a container hash value.
- *
- * NOTE: It is better to create a template hash class that is backed by
- * std::array instead, since hashes are of a fixed size. Container hashing
- * could also be faster, e.g. `*(reinterpret_cast<const size_t*>(h.data()))`.
  */
-class Hash : public Bytes {
-public:
-  Hash() = default;
-  Hash(const Hash& other) = default;
-  Hash(Hash&& other) noexcept = default;
-  Hash& operator=(const Hash& other) = default;
-  Hash& operator=(Hash&& other) noexcept = default;
-  Hash(const Bytes& other) : Bytes(other) {}
-  Hash(Bytes&& other) noexcept : Bytes(std::move(other)) {}
-};
+using Hash = std::vector<std::byte>;
 
 inline size_t hash_value(const Hash& h) {
   size_t hv = 0;
@@ -403,6 +108,91 @@ inline size_t hash_value(const Hash& h) {
     memcpy(&hv, h.data(), count);
   }
   return hv;
+}
+
+inline Bytes hashToBytes(const Hash& h) {
+  const char* data = reinterpret_cast<const char*>(h.data());
+  return Bytes(data, data + h.size());
+}
+
+inline Hash bytesToHash(const Bytes& b) {
+  const std::byte* data = reinterpret_cast<const std::byte*>(b.data());
+  return Hash(data, data + b.size());
+}
+
+inline Bytes makeBytes(const char* str) {
+  if (!str) {
+    return Bytes();
+  }
+  return Bytes(str, str + std::strlen(str));
+}
+
+inline Bytes makeBytes(const std::string& str) {
+  return Bytes(str.begin(), str.end());
+}
+
+inline std::span<std::byte> bytesAsSpan(Bytes& bytes) {
+  return {reinterpret_cast<std::byte*>(bytes.data()), bytes.size()};
+}
+
+inline std::span<const std::byte> bytesAsSpan(const Bytes& bytes) {
+  return {reinterpret_cast<const std::byte*>(bytes.data()), bytes.size()};
+}
+
+inline std::span<std::byte> hashAsSpan(Hash& hash) {
+  return {reinterpret_cast<std::byte*>(hash.data()), hash.size()};
+}
+
+inline std::span<const std::byte> hashAsSpan(const Hash& hash) {
+  return {reinterpret_cast<const std::byte*>(hash.data()), hash.size()};
+}
+
+inline Bytes bytesDecodeHex(const char* hexData, size_t hexSize) {
+  Bytes result(hexSize / 2);
+  logkv::decodeHex(result.data(), result.size(), hexData, hexSize);
+  return result;
+}
+
+inline Bytes bytesDecodeHex(const std::string& hexStr) {
+  return bytesDecodeHex(hexStr.data(), hexStr.size());
+}
+
+inline Bytes bytesDecodeHex(const Bytes& hexBytes) {
+  return bytesDecodeHex(hexBytes.data(), hexBytes.size());
+}
+
+inline Bytes bytesDecodeHex(const Hash& hexBytes) {
+  return bytesDecodeHex(reinterpret_cast<const char*>(hexBytes.data()),
+                        hexBytes.size());
+}
+
+inline Bytes bytesEncodeHex(const char* data, size_t size, bool upper = false) {
+  Bytes result(size * 2);
+  logkv::encodeHex(result.data(), result.size(), data, size, upper);
+  return result;
+}
+
+inline Bytes bytesEncodeHex(const std::string& str, bool upper = false) {
+  return bytesEncodeHex(str.data(), str.size(), upper);
+}
+
+inline Bytes bytesEncodeHex(const Bytes& bytes, bool upper = false) {
+  return bytesEncodeHex(bytes.data(), bytes.size(), upper);
+}
+
+inline Bytes bytesEncodeHex(const Hash& bytes, bool upper = false) {
+  return bytesEncodeHex(reinterpret_cast<const char*>(bytes.data()),
+                        bytes.size(), upper);
+}
+
+inline std::ostream& operator<<(std::ostream& os, const Bytes& b) {
+  os.write(b.data(), b.size());
+  return os;
+}
+
+inline std::ostream& operator<<(std::ostream& os, const Hash& h) {
+  os.write(reinterpret_cast<const char*>(h.data()), h.size());
+  return os;
 }
 
 } // namespace logkv

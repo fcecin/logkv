@@ -152,7 +152,7 @@ int main(int argc, char* argv[]) {
     std::fill(test_hash.begin(), test_hash.end(), 0xFE);
     boost::uuids::random_generator gen;
     boost::uuids::uuid test_uuid = gen();
-    Bytes test_bytes("testing bytes");
+    Bytes test_bytes = makeBytes("testing bytes");
 
     TestObject populated_obj(
       uint64_t(999888777), test_hash, "Hello, serialization!",

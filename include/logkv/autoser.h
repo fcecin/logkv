@@ -36,8 +36,6 @@
  * #include <logkv/autoser/bytes.h>
  * - std::string
  * - std::vector<T> of raw byte data (sizeof(T) == 1 && std::is_trivial_v(T))
- * - logkv::Bytes
- * - logkv::Hash
  *
  * #include <logkv/autoser/pushback.h>
  * - std::vector<T> of serializable<T> types (excluding raw byte data)

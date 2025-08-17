@@ -438,7 +438,7 @@ void test_container_std_span() {
                            std::begin(dest_arr)));
   }
   {
-    logkv::Bytes original_bytes("some_raw_data");
+    logkv::Bytes original_bytes = logkv::makeBytes("some_raw_data");
     std::span<const uint8_t> src_span(
       reinterpret_cast<const uint8_t*>(original_bytes.data()),
       original_bytes.size());
@@ -553,15 +553,15 @@ void test_deeply_nested_object() {
     {
       Level1Container vec1;
       vec1.emplace_back(101, boost::asio::ip::make_address("1.1.1.1"),
-                        logkv::Bytes("bytes1"), OpaqueComposite(1, "agg1"),
+                        logkv::makeBytes("bytes1"), OpaqueComposite(1, "agg1"),
                         "leaf_str1");
       vec1.emplace_back(102, boost::asio::ip::make_address("2001:db8::1"),
-                        logkv::Bytes("bytes2"), OpaqueComposite(2, "agg2"),
+                        logkv::makeBytes("bytes2"), OpaqueComposite(2, "agg2"),
                         "leaf_str2");
       map1["vec_A"] = vec1;
       Level1Container vec2;
       vec2.emplace_back(201, boost::asio::ip::make_address("3.3.3.3"),
-                        logkv::Bytes("bytes3"), OpaqueComposite(3, "agg3"),
+                        logkv::makeBytes("bytes3"), OpaqueComposite(3, "agg3"),
                         "leaf_str3");
       map1["vec_B"] = vec2;
     }
@@ -624,7 +624,7 @@ void test_pfr_automatic_serialization() {
   test_type_serialization(SimplePfrAggregate{-123, "Hello PFR!"});
 
   test_type_serialization(NestedPfrAggregate{
-    9001, {-456, "I am nested"}, logkv::Bytes("raw data"), {10, 20, 30}});
+    9001, {-456, "I am nested"}, logkv::makeBytes("raw data"), {10, 20, 30}});
 
   auto obj_with_method = PfrWithMethod{5, 7};
   ASSERT_EQ(obj_with_method.sum(), 12);

@@ -1,8 +1,6 @@
 #include <logkv/store.h>
 using namespace logkv;
 
-#include <logkv/autoser/bytes.h>
-
 #include <boost/unordered/unordered_flat_map.hpp>
 
 #include <iostream>
@@ -10,10 +8,12 @@ using namespace logkv;
 int main(int argc, char* argv[]) {
   const std::string dirStr = "./hellodata";
 
-  Bytes k = Bytes::decodeHex("aabbcc");
-  Bytes v = Bytes::decodeHex("ddeeff");
+  Bytes k = bytesDecodeHex("aabbcc");
+  Bytes v = bytesDecodeHex("ddeeff");
 
   std::cout << "test: write data" << std::endl;
+  std::cout << "  key  : " << bytesEncodeHex(k) << std::endl;
+  std::cout << "  value: " << bytesEncodeHex(v) << std::endl;
 
   {
     Store<boost::unordered_flat_map, Bytes, Bytes> objs(
@@ -32,11 +32,12 @@ int main(int argc, char* argv[]) {
       return 1;
     }
 
+    std::cout << "value: " << bytesEncodeHex(objs2[k]) << std::endl;
+
     if (objs2[k] == v) {
-      std::cout << "test passed" << std::endl;
+      std::cout << "test passed: correct value." << std::endl;
     } else {
-      std::cout << "test failed: wrong value: "
-                << Bytes::encodeHex(objs2[k]).toString() << std::endl;
+      std::cout << "test failed: wrong value." << std::endl;
       return 1;
     }
   }

@@ -227,8 +227,10 @@ void test_store_update_erase_flush_events() {
   std::string test_name = "update_erase_events";
   std::string dir_path = setup_test_directory(test_name);
 
-  logkv::Bytes key1("keyOne"), val1("valueOne");
-  logkv::Bytes key2("keyTwo"), val2("valueTwo");
+  logkv::Bytes key1 = logkv::makeBytes("keyOne");
+  logkv::Bytes val1 = logkv::makeBytes("valueOne");
+  logkv::Bytes key2 = logkv::makeBytes("keyTwo");
+  logkv::Bytes val2 = logkv::makeBytes("valueTwo");
 
   {
     TestStore store(dir_path, logkv::StoreFlags::createDir);
@@ -273,8 +275,10 @@ void test_store_save_snapshot_with_data() {
   std::string test_name = "save_load_data";
   std::string dir_path = setup_test_directory(test_name);
 
-  logkv::Bytes key1("s_key1"), val1("s_val1");
-  logkv::Bytes key2("s_key2"), val2("s_val2");
+  logkv::Bytes key1 = logkv::makeBytes("s_key1");
+  logkv::Bytes val1 = logkv::makeBytes("s_val1");
+  logkv::Bytes key2 = logkv::makeBytes("s_key2");
+  logkv::Bytes val2 = logkv::makeBytes("s_val2");
 
   {
     TestStore store(dir_path, logkv::StoreFlags::createDir);
@@ -314,7 +318,8 @@ void test_store_clear_method() {
   std::string test_name = "clear_method";
   std::string dir_path = setup_test_directory(test_name);
 
-  logkv::Bytes key1("c_key1"), val1("c_val1");
+  logkv::Bytes key1 = logkv::makeBytes("c_key1");
+  logkv::Bytes val1 = logkv::makeBytes("c_val1");
 
   {
     TestStore store(dir_path, logkv::StoreFlags::createDir);
@@ -348,9 +353,11 @@ void test_store_load_snapshot_then_newer_events() {
   std::string test_name = "load_snap_then_events";
   std::string dir_path = setup_test_directory(test_name);
 
-  logkv::Bytes key_snap("key_snap"), val_snap("val_snap");
-  logkv::Bytes key_event("key_event"), val_event("val_event");
-  logkv::Bytes val_snap_updated("val_snap_MODIFIED");
+  logkv::Bytes key_snap = logkv::makeBytes("key_snap");
+  logkv::Bytes val_snap = logkv::makeBytes("val_snap");
+  logkv::Bytes key_event = logkv::makeBytes("key_event");
+  logkv::Bytes val_event = logkv::makeBytes("val_event");
+  logkv::Bytes val_snap_updated = logkv::makeBytes("val_snap_MODIFIED");
 
   {
     TestStore store(dir_path, logkv::StoreFlags::createDir);
@@ -385,9 +392,11 @@ void test_store_operator_access() {
   std::string test_name = "operator_access";
   std::string dir_path = setup_test_directory(test_name);
 
-  logkv::Bytes key1("op_key1"), val1("op_val1");
-  logkv::Bytes key2("op_key2"), val2_initial("op_val2_initial"),
-    val2_modified("op_val2_modified");
+  logkv::Bytes key1 = logkv::makeBytes("op_key1");
+  logkv::Bytes val1 = logkv::makeBytes("op_val1");
+  logkv::Bytes key2 = logkv::makeBytes("op_key2");
+  logkv::Bytes val2_initial = logkv::makeBytes("op_val2_initial");
+  logkv::Bytes val2_modified = logkv::makeBytes("op_val2_modified");
 
   TestStore store(dir_path, logkv::StoreFlags::createDir);
 
@@ -407,15 +416,15 @@ void test_store_operator_access() {
   assert(store[key2] == val2_modified);
 
   store().clear();
-  store()[key1] = logkv::Bytes("final_val");
+  store()[key1] = logkv::makeBytes("final_val");
   assert(store.getObjects().size() == 1);
-  assert(store[key1] == logkv::Bytes("final_val"));
+  assert(store[key1] == logkv::makeBytes("final_val"));
 
   store.save();
 
   TestStore store_load(dir_path, logkv::StoreFlags::none);
   assert(store_load.getObjects().size() == 1);
-  assert(store_load[key1] == logkv::Bytes("final_val"));
+  assert(store_load[key1] == logkv::makeBytes("final_val"));
 
   cleanup_test_directory(dir_path);
   std::cout << "test_store_operator_access PASSED." << std::endl;
@@ -425,9 +434,10 @@ void test_store_buffer_resizing() {
   std::cout << "Running test_store_buffer_resizing..." << std::endl;
   std::string suite_parent_dir_name = "buffer_resizing_suite";
 
-  logkv::Bytes k1("k"), v1("v");
-
-  logkv::Bytes k2("key_long"), v2("value_very_long_indeed");
+  logkv::Bytes k1 = logkv::makeBytes("k");
+  logkv::Bytes v1 = logkv::makeBytes("v");
+  logkv::Bytes k2 = logkv::makeBytes("key_long");
+  logkv::Bytes v2 = logkv::makeBytes("value_very_long_indeed");
 
   std::vector<size_t> buffer_sizes_to_test = {5,  9, 16, 20,
                                               30, 50
@@ -512,13 +522,15 @@ void test_store_key_types() {
     }
 
     {
-      std::cout << "  Subtest: unordered_map logkv::Bytes keys and values..." << std::endl;
-      using StringStore = logkv::Store<std::unordered_map, logkv::Bytes, logkv::Bytes>;
+      std::cout << "  Subtest: unordered_map logkv::Bytes keys and values..."
+                << std::endl;
+      using StringStore =
+        logkv::Store<std::unordered_map, logkv::Bytes, logkv::Bytes>;
 
-      logkv::Bytes key1("key 1");
-      logkv::Bytes key2("value 1");
-      logkv::Bytes val1("key 2");
-      logkv::Bytes val2("value 2");
+      logkv::Bytes key1 = logkv::makeBytes("key 1");
+      logkv::Bytes key2 = logkv::makeBytes("value 1");
+      logkv::Bytes val1 = logkv::makeBytes("key 2");
+      logkv::Bytes val2 = logkv::makeBytes("value 2");
       {
         StringStore store(dir_path, logkv::createDir | logkv::deleteData);
 
@@ -543,13 +555,16 @@ void test_store_key_types() {
     }
 
     {
-      std::cout << "  Subtest: boost_unordered_flat_map logkv::Bytes keys and values..." << std::endl;
-      using StringStore = logkv::Store<boost::unordered_flat_map, logkv::Bytes, logkv::Bytes>;
+      std::cout
+        << "  Subtest: boost_unordered_flat_map logkv::Bytes keys and values..."
+        << std::endl;
+      using StringStore =
+        logkv::Store<boost::unordered_flat_map, logkv::Bytes, logkv::Bytes>;
 
-      logkv::Bytes key1("key 1");
-      logkv::Bytes key2("value 1");
-      logkv::Bytes val1("key 2");
-      logkv::Bytes val2("value 2");
+      logkv::Bytes key1 = logkv::makeBytes("key 1");
+      logkv::Bytes key2 = logkv::makeBytes("value 1");
+      logkv::Bytes val1 = logkv::makeBytes("key 2");
+      logkv::Bytes val2 = logkv::makeBytes("value 2");
       {
         StringStore store(dir_path, logkv::createDir | logkv::deleteData);
 
@@ -614,8 +629,9 @@ void test_store_key_types() {
     }
 
     {
-      std::cout << "  Subtest: unordered_map boost::asio::ip::udp::endpoint keys..."
-                << std::endl;
+      std::cout
+        << "  Subtest: unordered_map boost::asio::ip::udp::endpoint keys..."
+        << std::endl;
       using Socket = boost::asio::ip::udp::endpoint;
       using SocketStore = logkv::Store<std::unordered_map, Socket, std::string>;
 
@@ -647,10 +663,12 @@ void test_store_key_types() {
     }
 
     {
-      std::cout << "  Subtest: boost::unordered_flat_map boost::asio::ip::udp::endpoint keys..."
+      std::cout << "  Subtest: boost::unordered_flat_map "
+                   "boost::asio::ip::udp::endpoint keys..."
                 << std::endl;
       using Socket = boost::asio::ip::udp::endpoint;
-      using SocketStore = logkv::Store<boost::unordered_flat_map, Socket, std::string>;
+      using SocketStore =
+        logkv::Store<boost::unordered_flat_map, Socket, std::string>;
 
       Socket key1(boost::asio::ip::make_address("1.2.3.4"), 5);
       Socket key2(boost::asio::ip::make_address("6.7.8.9"), 10);
@@ -682,7 +700,8 @@ void test_store_key_types() {
     {
       using ArrayHash = std::array<uint8_t, 32>;
       std::cout << "  Subtest: array<uint8_t> store" << std::endl;
-      using ArrStore = logkv::Store<boost::unordered_flat_map, ArrayHash, ArrayHash>;
+      using ArrStore =
+        logkv::Store<boost::unordered_flat_map, ArrayHash, ArrayHash>;
 
       ArrayHash key1, key2, val1, val2;
       key1.fill(1);
@@ -707,7 +726,8 @@ void test_store_key_types() {
 
     {
       std::cout << "  Subtest: uint64_t store" << std::endl;
-      using IntStore = logkv::Store<boost::unordered_flat_map, uint64_t, uint64_t>;
+      using IntStore =
+        logkv::Store<boost::unordered_flat_map, uint64_t, uint64_t>;
       uint64_t key1 = 100;
       uint64_t key2 = 200;
       uint64_t val1 = 300;
