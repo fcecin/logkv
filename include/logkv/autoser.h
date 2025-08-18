@@ -9,9 +9,10 @@
 #include <array>
 #include <bit>
 #include <limits>
+#include <span>
 #include <string>
 #include <tuple>
-#include <span>
+#include <variant>
 
 /**
  * Automatic serialization support.
@@ -120,7 +121,8 @@ private:
 class Reader {
 public:
   Reader(const void* src, size_t size)
-      : ptr_(static_cast<const char*>(src)), initial_ptr_(ptr_), remaining_(size) {}
+      : ptr_(static_cast<const char*>(src)), initial_ptr_(ptr_),
+        remaining_(size) {}
   template <typename T> void read(T& val) {
     size_t bytes_read = serializer<T>::read(ptr_, remaining_, val);
     if (bytes_read > remaining_) {
@@ -473,6 +475,83 @@ struct serializer<T, std::void_t<typename composite_traits<T>::member_types>> {
       return reader.bytes_processed() + e.get_required_bytes();
     }
     return reader.bytes_processed();
+  }
+};
+
+// ----------------------------------------------------------------------------
+// std::variant<Ts...> for serializable<T> types
+// ----------------------------------------------------------------------------
+
+template <> struct serializer<std::monostate> {
+  static size_t get_size(const std::monostate&) { return 0; }
+  static bool is_empty(const std::monostate&) { return true; }
+  static size_t write(char* dest, size_t size, const std::monostate&) {
+    return 0;
+  }
+  static size_t read(const char* src, size_t size, std::monostate& v) {
+    return 0;
+  }
+};
+
+template <size_t I, typename... Ts>
+inline size_t variant_reader(uint8_t index, const char* src, size_t size,
+                             std::variant<Ts...>& v) {
+  if (index == I) {
+    using T = std::variant_alternative_t<I, std::variant<Ts...>>;
+    T value;
+    size_t used = serializer<T>::read(src, size, value);
+    if (used <= size) {
+      v.template emplace<I>(std::move(value));
+    }
+    return used;
+  }
+  if constexpr (I + 1 < sizeof...(Ts)) {
+    return variant_reader<I + 1, Ts...>(index, src, size, v);
+  }
+  throw std::runtime_error(std::string("Invalid variant index ") +
+                           std::to_string(index) + " in stream");
+}
+
+template <typename... Ts> struct serializer<std::variant<Ts...>> {
+  static_assert(sizeof...(Ts) <= 256, "Too many variant types");
+  static size_t get_size(const std::variant<Ts...>& v) {
+    size_t size = sizeof(uint8_t);
+    size += std::visit(
+      [](const auto& value) {
+        return serializer<std::decay_t<decltype(value)>>::get_size(value);
+      },
+      v);
+    return size;
+  }
+  static bool is_empty(const std::variant<Ts...>& v) {
+    return std::visit(
+      [](const auto& value) {
+        return serializer<std::decay_t<decltype(value)>>::is_empty(value);
+      },
+      v);
+  }
+  static size_t write(char* dest, size_t size, const std::variant<Ts...>& v) {
+    size_t needed = get_size(v);
+    if (size < needed)
+      return needed;
+    dest[0] = static_cast<uint8_t>(v.index());
+    std::visit(
+      [&](const auto& value) {
+        serializer<std::decay_t<decltype(value)>>::write(dest + 1, size - 1,
+                                                         value);
+      },
+      v);
+    return needed;
+  }
+  static size_t read(const char* src, size_t size, std::variant<Ts...>& v) {
+    if (size < 1)
+      return 1;
+    uint8_t index = src[0];
+    if (index >= sizeof...(Ts)) {
+      throw std::runtime_error("Invalid variant index in stream");
+    }
+    size_t used = variant_reader<0, Ts...>(index, src + 1, size - 1, v);
+    return 1 + used;
   }
 };
 

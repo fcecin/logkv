@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <sstream>
+#include <variant>
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -633,6 +634,25 @@ void test_pfr_automatic_serialization() {
   test_type_serialization(EmptyPfrAggregate{});
 }
 
+void test_variant_type() {
+    using TestVariant = std::variant<int32_t, std::string, OpaqueComposite>;
+    test_type_serialization<TestVariant>(TestVariant{int32_t(-12345)});
+    test_type_serialization<TestVariant>(TestVariant{std::string("variant string")});
+    test_type_serialization<TestVariant>(TestVariant{OpaqueComposite(99, "opaque in variant")});
+
+    using AnotherVariant = std::variant<std::monostate, uint64_t, MyTestObject, std::vector<int>>;
+    MyTestObject original_obj(1, 2, "three", {4, "four"});
+
+    test_type_serialization<AnotherVariant>(AnotherVariant{});
+    test_type_serialization<AnotherVariant>(AnotherVariant{9876543210ULL});
+    test_type_serialization<AnotherVariant>(AnotherVariant{original_obj});
+    test_type_serialization<AnotherVariant>(AnotherVariant{std::vector<int>{10, 20, 30}});
+
+    using NestedVariant = std::variant<int64_t, TestVariant>;
+    test_type_serialization<NestedVariant>(NestedVariant{int64_t(1234567890123LL)});
+    test_type_serialization<NestedVariant>(NestedVariant{TestVariant{std::string("deeply nested")}});
+}
+
 // -----------------------------------------------------------------------------
 // Test runner
 // -----------------------------------------------------------------------------
@@ -670,6 +690,8 @@ int main(int argc, char* argv[]) {
   RUN_TEST(test_value_vs_reference_semantics);
 
   RUN_TEST(test_pfr_automatic_serialization);
+
+  RUN_TEST(test_variant_type);
 
   std::cout << "========================================\n"
             << "Test Summary:\n"
