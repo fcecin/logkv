@@ -28,6 +28,7 @@ Bytes randomBytes(size_t len, std::mt19937_64& rng) {
 }
 
 int main(int argc, char* argv[]) {
+  int exitcode = 0;
   const std::string dirStr = "./benchdata";
 
   std::cout << "Benchmark: " << NUM_UPDATE_OPS << " updates, logging 1 in "
@@ -97,7 +98,7 @@ int main(int argc, char* argv[]) {
 
   std::cout << "Saving final state..." << std::endl;
   auto save_start_time = std::chrono::steady_clock::now();
-  store.save(false);
+  store.save(StoreSaveMode::asyncClear);
   auto save_end_time = std::chrono::steady_clock::now();
   std::chrono::duration<double> snapshot_write_time =
     save_end_time - save_start_time;
@@ -124,6 +125,7 @@ int main(int argc, char* argv[]) {
   if (!store2.load()) {
     std::cout << "ERROR: store2.load() returned false (corrupted events file)."
               << std::endl;
+    exitcode = 1;
   }
   auto load_end_time = std::chrono::steady_clock::now();
   std::chrono::duration<double> snapshot_read_time =
@@ -142,6 +144,7 @@ int main(int argc, char* argv[]) {
     identical = false;
     std::cout << "Test failed: Different sizes! store size: " << map1.size()
               << ", store2 size: " << map2.size() << std::endl;
+    exitcode = 1;
   } else {
     std::cout << "Testing " << map1.size() << " elements..." << std::endl;
     size_t compared_count = 0;
@@ -153,12 +156,14 @@ int main(int argc, char* argv[]) {
         identical = false;
         std::cout << "Test failed: Key from store not found in store2."
                   << std::endl;
+        exitcode = 1;
         break;
       }
       const Bytes& val2 = it2->second;
       if (!(val1 == val2)) {
         identical = false;
         std::cout << "Test failed: Values for a key differ." << std::endl;
+        exitcode = 1;
         break;
       }
       compared_count++;
@@ -167,6 +172,8 @@ int main(int argc, char* argv[]) {
   if (identical && map1.size() == map2.size()) {
     std::cout << "Test passed: store and store2 objects are identical."
               << std::endl;
+  } else {
+    exitcode = 1;
   }
-  return 0;
+  return exitcode;
 }

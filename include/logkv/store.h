@@ -1,18 +1,28 @@
 #ifndef _LOGKV_STORE_H_
 #define _LOGKV_STORE_H_
 
-#ifdef _WIN32
-#include <io.h>
-#include <stdio.h>
-#else
-#include <unistd.h>
-#endif
-
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32) || defined(_WIN64)
+#define LOGKV_WINDOWS 1
+#else
+#define LOGKV_WINDOWS 0
+#endif
+
+#if LOGKV_WINDOWS
+#include <io.h>
+#include <process.h>
+#include <stdio.h>
+#else
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <logkv/autoser/bytes.h>
 
@@ -26,6 +36,17 @@ enum StoreFlags {
   createDir = 1,  /// Creates directory if it doesn't exist.
   deleteData = 2, /// Deletes data in directory, if it exists.
   deferLoad = 4   /// Do not `load()` after setting the directory.
+};
+
+/**
+ * Store save mode.
+ */
+enum StoreSaveMode {
+  asyncClear = 0, // Write snapshot synchronously but clean up old files
+                  // asynchronously (detached threads).
+  syncSave = 1,   // Fully serial (synchronous) mode.
+  forkSave = 2    // Fork the process to write new snapshot and clean up old
+                  // files afterwards. If no POSIX, reverts to `threaded`.
 };
 
 /**
@@ -69,7 +90,7 @@ private:
       }
     }
     if (sync) {
-#ifdef _WIN32
+#if LOGKV_WINDOWS
       _commit(_fileno(f));
 #else
       fsync(fileno(f));
@@ -97,6 +118,84 @@ private:
     events_ = fopen(eventsPath.string().c_str(), "ab+");
     if (!events_) {
       throw std::runtime_error("cannot open events file for writing");
+    }
+  }
+
+  void writeSnapshot(uint64_t snapshotTime) {
+    auto snapshotStem = pad(snapshotTime);
+    auto snapshotName = snapshotStem + ".snapshot";
+    auto snapshotPath = std::filesystem::path(dir_) / snapshotName;
+    std::ostringstream tempNameStream;
+    uint64_t nanosEpoch = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    int pid = 0;
+#if LOGKV_WINDOWS
+    pid = _getpid();
+#else
+    pid = getpid();
+#endif
+    tempNameStream << "tmp_snapshot_" << pid << "_" << nanosEpoch << "_"
+                   << snapshotStem;
+    auto tempPath = std::filesystem::path(dir_) / tempNameStream.str();
+    FILE* sf = fopen(tempPath.string().c_str(), "wb");
+    if (!sf) {
+      throw std::runtime_error("cannot open temp snapshot file for writing");
+    }
+    writeOffset_ = 0;
+    try {
+      for (auto& [k, v] : objects_) {
+        writeUpdate(sf, k, v);
+      }
+      flush(sf, true);
+    } catch (std::exception& ex) {
+      closeFile(sf);
+      try {
+        std::filesystem::remove(tempPath);
+      } catch (...) {
+      }
+      throw ex;
+    }
+    closeFile(sf);
+    try {
+      std::filesystem::rename(tempPath, snapshotPath);
+    } catch (const std::exception& e) {
+      try {
+        std::filesystem::remove(tempPath);
+      } catch (...) {
+      }
+      throw std::runtime_error(std::string("failed to rename snapshot: ") +
+                               e.what());
+    }
+  }
+
+  void deleteOldSnapshotsAndEvents(uint64_t keepSnapshotTime) {
+    auto snapshotStem = pad(keepSnapshotTime);
+    std::vector<std::filesystem::path> toDelete;
+    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
+      if (!entry.is_regular_file())
+        continue;
+      const auto& path = entry.path();
+      auto stem = path.stem().string();
+      if (!std::all_of(stem.begin(), stem.end(), ::isdigit))
+        continue;
+      auto ext = path.extension().string();
+      uint64_t fileNum = std::stoull(stem);
+      if (ext == ".events") {
+        if (fileNum < keepSnapshotTime) {
+          toDelete.push_back(path);
+        }
+      } else if (ext == ".snapshot") {
+        if (fileNum < keepSnapshotTime) {
+          toDelete.push_back(path);
+        }
+      }
+    }
+    for (const auto& p : toDelete) {
+      try {
+        std::filesystem::remove(p);
+      } catch (...) {
+      }
     }
   }
 
@@ -371,7 +470,7 @@ public:
    */
   void clear() {
     objects_.clear();
-    save();
+    save(StoreSaveMode::syncSave);
   }
 
   /**
@@ -402,8 +501,8 @@ public:
         throw std::runtime_error("cannot open snapshot file for reading");
       }
     }
+    objects_.clear();
     if (sf) {
-      objects_.clear();
       if (!replay(sf)) {
         closeFile(sf);
         throw std::runtime_error("corrupted snapshot");
@@ -412,103 +511,109 @@ public:
     } else {
       time_ = 0;
     }
-    auto eventsPath = std::filesystem::path(dir_) / (pad(time_) + ".events");
-    FILE* ef = nullptr;
-    if (std::filesystem::exists(eventsPath) &&
-        std::filesystem::is_regular_file(eventsPath)) {
-      ef = fopen(eventsPath.string().c_str(), "rb");
+    uint64_t expectedTime = time_;
+    std::vector<uint64_t> eventTimes;
+    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
+      if (!entry.is_regular_file())
+        continue;
+      auto path = entry.path();
+      if (path.extension() != ".events")
+        continue;
+      auto stem = path.stem().string();
+      if (!std::all_of(stem.begin(), stem.end(), ::isdigit))
+        continue;
+      uint64_t fileNum = std::stoull(stem);
+      if (fileNum >= time_) {
+        eventTimes.push_back(fileNum);
+      }
+    }
+    std::sort(eventTimes.begin(), eventTimes.end());
+    bool corrupted = false;
+    for (uint64_t eventTime : eventTimes) {
+      if (eventTime != expectedTime) {
+        corrupted = true;
+      }
+      auto eventsPath =
+        std::filesystem::path(dir_) / (pad(eventTime) + ".events");
+      FILE* ef = fopen(eventsPath.string().c_str(), "rb");
       if (!ef) {
         throw std::runtime_error("cannot open events file for reading");
+      } else {
+        if (!replay(ef)) {
+          closeFile(ef);
+          std::filesystem::remove(eventsPath);
+          corrupted = true;
+        } else {
+          time_ = eventTime;
+        }
+        closeFile(ef);
       }
-    }
-    if (snapshots.empty()) {
-      objects_.clear();
+      expectedTime = eventTime + 1;
     }
     loaded_ = true;
-    if (ef) {
-      if (!replay(ef)) {
-        closeFile(ef);
-        std::filesystem::remove(eventsPath);
-        save();
-        return false;
-      } else {
-        closeFile(ef);
-      }
+    if (corrupted) {
+      save(StoreSaveMode::syncSave);
     }
     closeEventsFile();
     openEventsFile();
-    return true;
+    return !corrupted;
   }
 
   /**
    * Save state to the store's directory.
    * Deletes any and all snapshots and event logs and writes a fresh snapshot.
-   * @param sync `true` for synchronous file deletion, `false` otherwise.
+   * @param mode Save mode (see `logkv::StoreSaveMode` enum).
    * @throws std::exception on any filesystem, write or serialization error.
    */
-  void save(bool sync = true) {
+  int save(int mode = StoreSaveMode::syncSave) {
     if (!loaded_) {
       throw std::runtime_error("cannot save() without calling load() first");
     }
-    auto snapshotStem = pad(time_ + 1);
-    auto snapshotName = snapshotStem + ".snapshot";
-    auto snapshotPath = std::filesystem::path(dir_) / snapshotName;
-    FILE* sf = fopen(snapshotPath.string().c_str(), "wb");
-    if (!sf) {
-      throw std::runtime_error("cannot open snapshot file for writing");
-    }
-    writeOffset_ = 0;
-    try {
-      for (auto& [k, v] : objects_) {
-        writeUpdate(sf, k, v);
+#if !LOGKV_WINDOWS
+    if (mode == StoreSaveMode::forkSave) {
+      int status;
+      while (waitpid(-1, &status, WNOHANG) > 0) {
       }
-      flush(sf, true);
-    } catch (std::exception& ex) {
-      closeFile(sf);
-      try {
-        std::filesystem::remove(snapshotPath);
-      } catch (...) {
+      uint64_t snapshotTime = time_ + 1;
+      pid_t pid = fork();
+      if (pid == -1) {
+        throw std::runtime_error("fork() failed");
+      } else if (pid == 0) { // Child
+        if (events_) {
+          fclose(events_);
+          events_ = nullptr;
+        }
+        try {
+          writeSnapshot(snapshotTime);
+          deleteOldSnapshotsAndEvents(snapshotTime);
+        } catch (...) {
+          _exit(1);
+        }
+        _exit(0);
+      } else { // Parent
+        time_ = snapshotTime;
+        closeFile(events_);
+        events_ = nullptr;
+        openEventsFile();
+        return pid;
       }
-      throw ex;
     }
-    ++time_;
-    closeFile(sf);
+#endif
+
+    uint64_t snapshotTime = time_ + 1;
+    writeSnapshot(snapshotTime);
+    time_ = snapshotTime;
     closeFile(events_);
     events_ = nullptr;
-    std::vector<std::filesystem::path> toDelete;
-    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
-      if (!entry.is_regular_file()) {
-        continue;
-      }
-      const auto& path = entry.path();
-      auto stem = path.stem().string();
-      if (!std::all_of(stem.begin(), stem.end(), ::isdigit)) {
-        continue;
-      }
-      auto ext = path.extension().string();
-      if (ext == ".events") {
-        toDelete.push_back(path);
-      } else if (ext == ".snapshot" && stem != snapshotStem) {
-        toDelete.push_back(path);
-      }
-    }
-    if (!toDelete.empty()) {
-      auto deleteFiles =
-        [](const std::vector<std::filesystem::path>& pathsToDelete) {
-          for (const auto& p : pathsToDelete) {
-            try {
-              std::filesystem::remove(p);
-            } catch (...) {
-            }
-          }
-        };
-      if (sync) {
-        deleteFiles(toDelete);
-      } else {
-        std::thread(deleteFiles, std::move(toDelete)).detach();
-      }
-    }
     openEventsFile();
+    if (mode == StoreSaveMode::syncSave) {
+      deleteOldSnapshotsAndEvents(snapshotTime);
+    } else {
+      std::thread([this, snapshotTime]() {
+        deleteOldSnapshotsAndEvents(snapshotTime);
+      }).detach();
+    }
+    return 0;
   }
 };
 

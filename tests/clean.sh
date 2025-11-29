@@ -7,3 +7,7 @@ rm -f teststore
 rm -f teststore_nosanitizer
 rm -f autoser
 rm -f testautoser
+rm -f forktest
+rm -rf forktestdata
+rm -f forktest2
+rm -rf forktest2data
