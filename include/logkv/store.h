@@ -1,6 +1,13 @@
 #ifndef _LOGKV_STORE_H_
 #define _LOGKV_STORE_H_
 
+#ifdef _WIN32
+#include <io.h>
+#include <stdio.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -52,7 +59,7 @@ private:
     return oss.str();
   }
 
-  void flush(FILE* f) {
+  void flush(FILE* f, bool sync = false) {
     if (writeOffset_ > 0) {
       bool err = fwrite(buffer_.data(), 1, writeOffset_, f) != writeOffset_ ||
                  fflush(f) != 0;
@@ -60,6 +67,13 @@ private:
       if (err) {
         throw std::runtime_error("file write error");
       }
+    }
+    if (sync) {
+#ifdef _WIN32
+      _commit(_fileno(f));
+#else
+      fsync(fileno(f));
+#endif
     }
   }
 
@@ -71,7 +85,7 @@ private:
 
   void closeEventsFile() {
     if (events_) {
-      flush(events_);
+      flush(events_, true);
       closeFile(events_);
       events_ = nullptr;
     }
@@ -193,7 +207,8 @@ public:
       : flags_(flags), buffer_(bufferSize) {
     if (!logkv::serializer<V>::is_empty(emptyValue_)) {
       throw std::runtime_error(
-        std::string("detected a non-empty default-constructed value for a logkv::Store mapped type: ") +
+        std::string("detected a non-empty default-constructed value for a "
+                    "logkv::Store mapped type: ") +
         typeid(V).name());
     }
     setDirectory(dir);
@@ -347,8 +362,9 @@ public:
 
   /**
    * Flush any buffered writes to the events file.
+   * @param sync `true` to commit to disk, `false` otherwise.
    */
-  void flush() { flush(events_); }
+  void flush(bool sync = false) { flush(events_, sync); }
 
   /**
    * Clear the underlying K,V map, saving an empty snapshot.
@@ -446,7 +462,7 @@ public:
       for (auto& [k, v] : objects_) {
         writeUpdate(sf, k, v);
       }
-      flush(sf);
+      flush(sf, true);
     } catch (std::exception& ex) {
       closeFile(sf);
       try {
