@@ -443,8 +443,8 @@ public:
    * @param value Value to associate with the given key
    */
   void update(const K& key, const V& value) {
-    objects_[key] = value;
     writeUpdate(events_, key, value);
+    objects_[key] = value;
   }
 
   /**
@@ -454,10 +454,50 @@ public:
   void erase(const K& key) {
     auto it = objects_.find(key);
     if (it != objects_.end()) {
-      objects_.erase(it);
       writeErase(events_, key);
+      objects_.erase(it);
     }
   }
+
+  /**
+   * Iterator support.
+   */
+  using iterator = typename M<K, V>::iterator;
+  using const_iterator = typename M<K, V>::const_iterator;
+  iterator find(const K& key) { return objects_.find(key); }
+  const_iterator find(const K& key) const { return objects_.find(key); }
+  iterator begin() { return objects_.begin(); }
+  iterator end() { return objects_.end(); }
+  const_iterator begin() const { return objects_.begin(); }
+  const_iterator end() const { return objects_.end(); }
+  const_iterator cbegin() const { return objects_.cbegin(); }
+  const_iterator cend() const { return objects_.cend(); }
+
+  /**
+   * Update a K,V mapping, writing an event to the events log.
+   * @param it Pointer to the entry to modify
+   * @param value Value to write at the entry
+   */
+  void update(iterator it, const V& value) {
+    writeUpdate(events_, it->first, value);
+    it->second = value;
+  }
+
+  /**
+   * Erase the key at the iterator and write an event in the events log.
+   * @param it The entry to erase.
+   */
+  iterator erase(iterator it) {
+    writeErase(events_, it->first);
+    return objects_.erase(it);
+  }
+
+  /**
+   * Write an event in the events log for the given K,V entry.
+   * The caller has already modified the value for the key in place.
+   * @param it The entry to persist.
+   */
+  void persist(iterator it) { writeUpdate(events_, it->first, it->second); }
 
   /**
    * Flush any buffered writes to the events file.

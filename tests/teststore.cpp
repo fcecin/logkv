@@ -756,6 +756,63 @@ void test_store_key_types() {
   cleanup_test_directory(dir_path);
   std::cout << "test_store_key_types PASSED." << std::endl;
 }
+
+void test_store_iterators() {
+  std::cout << "Running test_store_iterators..." << std::endl;
+  std::string test_name = "iterators";
+  std::string dir_path = setup_test_directory(test_name);
+
+  logkv::Bytes key1 = logkv::makeBytes("i_key1");
+  logkv::Bytes val1 = logkv::makeBytes("i_val1");
+  logkv::Bytes key2 = logkv::makeBytes("i_key2");
+  logkv::Bytes val2 = logkv::makeBytes("i_val2");
+
+  {
+    TestStore store(dir_path, logkv::StoreFlags::createDir);
+    store.update(key1, val1);
+    store.update(key2, val2);
+
+    auto it1 = store.find(key1);
+    assert(it1 != store.end());
+    assert(it1->second == val1);
+
+    auto it_none = store.find(logkv::makeBytes("nonexistent"));
+    assert(it_none == store.end());
+
+    size_t count = 0;
+    for (auto it = store.begin(); it != store.end(); ++it) {
+      count++;
+    }
+    assert(count == 2);
+
+    it1->second = logkv::makeBytes("i_val1_modified");
+    store.persist(it1);
+    store.flush();
+  }
+
+  {
+    TestStore store_load(dir_path, logkv::StoreFlags::none);
+    assert(store_load.getObjects().at(key1) ==
+           logkv::makeBytes("i_val1_modified"));
+
+    auto it2 = store_load.find(key2);
+    assert(it2 != store_load.end());
+    store_load.erase(it2);
+
+    assert(store_load.find(key2) == store_load.end());
+    store_load.flush();
+  }
+
+  {
+    TestStore store_load2(dir_path, logkv::StoreFlags::none);
+    assert(store_load2.getObjects().count(key2) == 0);
+    assert(store_load2.getObjects().count(key1) == 1);
+  }
+
+  cleanup_test_directory(dir_path);
+  std::cout << "test_store_iterators PASSED." << std::endl;
+}
+
 int main() {
 
   if (!std::filesystem::exists(TEST_BASE_DIR)) {
@@ -772,6 +829,7 @@ int main() {
     test_store_operator_access();
     test_store_buffer_resizing();
     test_store_key_types();
+    test_store_iterators();
 
     std::cout << "\nALL Store tests PASSED successfully!" << std::endl;
 
