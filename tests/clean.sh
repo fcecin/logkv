@@ -11,3 +11,4 @@ rm -f forktest
 rm -rf forktestdata
 rm -f forktest2
 rm -rf forktest2data
+rm -f mode

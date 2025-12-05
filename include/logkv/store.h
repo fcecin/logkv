@@ -26,6 +26,11 @@
 
 #include <logkv/autoser/bytes.h>
 
+#define IF_CONSTEXPR_REQUIRES_EXPR_EXPR(expr)                                  \
+  if constexpr (requires { expr; }) {                                          \
+    expr;                                                                      \
+  }
+
 namespace logkv {
 
 /**
@@ -144,9 +149,11 @@ private:
     }
     writeOffset_ = 0;
     try {
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(true));
       for (auto& [k, v] : objects_) {
         writeUpdate(sf, k, v);
       }
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(false));
       flush(sf, true);
     } catch (std::exception& ex) {
       closeFile(sf);
@@ -310,6 +317,7 @@ public:
                     "logkv::Store mapped type: ") +
         typeid(V).name());
     }
+    IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(false));
     setDirectory(dir);
   }
 
