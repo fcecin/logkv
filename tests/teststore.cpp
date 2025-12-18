@@ -3,6 +3,7 @@
 #include <logkv/autoser/asio.h>
 #include <logkv/autoser/associative.h>
 #include <logkv/autoser/bytes.h>
+#include <logkv/autoser/partial.h>
 #include <logkv/autoser/pushback.h>
 
 #include <iostream>
@@ -515,8 +516,6 @@ void test_store_key_types() {
         assert(objects.at(key2) == val2);
         assert(objects.at(key3) == val3);
 
-        // writes the snapshot, which will exclude key3,val3
-        // only two keypairs will be in the snapshot
         store.save();
       }
     }
@@ -600,7 +599,7 @@ void test_store_key_types() {
       std::string key2 = "user:456:aliases";
       std::vector<std::string> val2 = {"Big John", "Johnny"};
       std::string key3 = "user:789:history";
-      std::vector<std::string> val3 = {}; // Empty vector
+      std::vector<std::string> val3 = {};
 
       {
         VecStore store(dir_path, logkv::createDir | logkv::deleteData);
@@ -813,6 +812,324 @@ void test_store_iterators() {
   std::cout << "test_store_iterators PASSED." << std::endl;
 }
 
+struct PartialObj : public logkv::AutoSerializableObject<PartialObj> {
+  uint64_t id;
+  std::string heavyData;
+  uint64_t counter;
+
+  PartialObj() : id(0), counter(0) {}
+  PartialObj(uint64_t i, std::string h, uint64_t c)
+      : id(i), heavyData(h), counter(c) {}
+
+  bool operator==(const PartialObj& other) const {
+    return id == other.id && heavyData == other.heavyData &&
+           counter == other.counter;
+  }
+
+  static void setFullSerialization(bool full) { fullMode_ = full; }
+  static bool getFullSerialization() { return fullMode_; }
+
+  static void _logkvStoreSnapshot(bool snapshot) { isSnapshot_ = snapshot; }
+  static bool _logkvStoreSnapshot() { return isSnapshot_; }
+
+  auto _full_tie() const { return std::tie(id, heavyData, counter); }
+  auto _partial_tie() const { return std::tie(id, counter); }
+
+  auto _full_tie_mut() { return std::tie(id, heavyData, counter); }
+  auto _partial_tie_mut() { return std::tie(id, counter); }
+
+private:
+  static thread_local bool fullMode_;
+  static thread_local bool isSnapshot_;
+};
+
+thread_local bool PartialObj::fullMode_ = false;
+thread_local bool PartialObj::isSnapshot_ = false;
+
+namespace logkv {
+template <> struct serializer<PartialObj> {
+  static size_t get_size(const PartialObj& obj) {
+    bool isSnapshot = PartialObj::_logkvStoreSnapshot();
+    bool full = isSnapshot || PartialObj::getFullSerialization();
+
+    if (full)
+      return logkv::get_size_for_members(obj._full_tie());
+
+    return logkv::get_size_for_members(obj._partial_tie()) +
+           (isSnapshot ? 0 : 1);
+  }
+
+  static bool is_empty(const PartialObj& obj) { return obj.id == 0; }
+
+  static size_t write(char* dest, size_t size, const PartialObj& obj) {
+    Writer writer(dest, size);
+    bool isSnapshot = PartialObj::_logkvStoreSnapshot();
+    bool full = isSnapshot || PartialObj::getFullSerialization();
+
+    try {
+      if (!isSnapshot) {
+
+        if (is_empty(obj)) {
+          writer.write((uint8_t)0x02);
+        } else if (full) {
+          writer.write((uint8_t)0x00);
+        } else {
+          writer.write((uint8_t)0x01);
+        }
+      }
+
+      if (is_empty(obj) && !isSnapshot) {
+
+      } else if (full) {
+        logkv::write_members(writer, obj._full_tie());
+      } else {
+        logkv::write_members(writer, obj._partial_tie());
+      }
+    } catch (const insufficient_buffer& e) {
+      return writer.bytes_processed() + e.get_required_bytes();
+    }
+    return writer.bytes_processed();
+  }
+
+  static size_t read(const char* src, size_t size, PartialObj& obj) {
+    Reader reader(src, size);
+    bool isSnapshot = PartialObj::_logkvStoreSnapshot();
+    bool full = isSnapshot;
+    bool objectIsEmpty = false;
+
+    try {
+      if (!isSnapshot) {
+        uint8_t header;
+        reader.read(header);
+        if (header == 0x02)
+          objectIsEmpty = true;
+        else if (header == 0x00)
+          full = true;
+        else if (header == 0x01)
+          full = false;
+        else
+          throw std::runtime_error("Invalid header");
+      }
+
+      if (objectIsEmpty) {
+        obj = PartialObj();
+      } else if (full) {
+        auto members = obj._full_tie_mut();
+        logkv::read_members(reader, members);
+      } else {
+        auto members = obj._partial_tie_mut();
+        logkv::read_members(reader, members);
+      }
+    } catch (const insufficient_buffer& e) {
+      return reader.bytes_processed() + e.get_required_bytes();
+    }
+    return reader.bytes_processed();
+  }
+};
+} // namespace logkv
+
+void test_store_partial_serialization() {
+  std::cout << "Running test_store_partial_serialization..." << std::endl;
+  std::string test_name = "partial_serialization";
+  std::string dir_path = setup_test_directory(test_name);
+
+  using PartialStore = logkv::Store<std::map, uint64_t, PartialObj>;
+
+  uint64_t k1 = 100;
+
+  std::string heavyOriginal = "ORIGINAL_HEAVY_DATA_THAT_MUST_SURVIVE";
+  std::string heavyTransient = "TRANSIENT_DATA_THAT_MUST_NOT_PERSIST";
+
+  {
+    PartialStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+    PartialObj p1(1, heavyOriginal, 10);
+    store.update(k1, p1);
+
+    store.save();
+  }
+
+  {
+    PartialStore store(dir_path);
+
+    assert(store.getObjects().at(k1).heavyData == heavyOriginal);
+
+    PartialObj p = store.getObjects().at(k1);
+    p.counter = 20;
+    p.heavyData = heavyTransient;
+
+    store.update(k1, p);
+    store.flush();
+  }
+
+  {
+    PartialStore store(dir_path);
+    const auto& obj = store.getObjects().at(k1);
+
+    if (obj.counter != 20) {
+      throw std::runtime_error("Partial update failed: counter not updated.");
+    }
+
+    if (obj.heavyData == heavyTransient) {
+      throw std::runtime_error("FAILURE: The partial update persisted the "
+                               "heavy data! Serialization is not porous.");
+    }
+
+    if (obj.heavyData != heavyOriginal) {
+      throw std::runtime_error(
+        "FAILURE: Heavy data corrupted/lost. Expected '" + heavyOriginal +
+        "' but found '" + obj.heavyData + "'");
+    }
+  }
+
+  cleanup_test_directory(dir_path);
+  std::cout << "test_store_partial_serialization PASSED." << std::endl;
+}
+
+struct MacroPartialObj
+    : public logkv::AutoPartialSerializableObject<MacroPartialObj> {
+  uint64_t id;
+  std::string heavyData;
+  uint64_t counter;
+
+  MacroPartialObj() : id(0), counter(0) {}
+  MacroPartialObj(uint64_t i, std::string h, uint64_t c)
+      : id(i), heavyData(h), counter(c) {}
+
+  auto operator<=>(const MacroPartialObj&) const = default;
+
+  AUTO_SERIALIZABLE_MEMBERS(id, heavyData, counter)
+
+  AUTO_PARTIAL_SERIALIZABLE_MEMBERS(id, counter)
+};
+
+void test_store_macro_partial_serialization() {
+  std::cout << "Running test_store_macro_partial_serialization..." << std::endl;
+  std::string test_name = "macro_partial_serialization";
+  std::string dir_path = setup_test_directory(test_name);
+
+  using MacroStore = logkv::Store<std::map, uint64_t, MacroPartialObj>;
+
+  uint64_t k1 = 555;
+
+  std::string heavyOriginal = "MACRO_ORIGINAL_HEAVY_DATA";
+  std::string heavyTransient = "MACRO_TRANSIENT_SHOULD_DISAPPEAR";
+
+  {
+    MacroStore store(dir_path, logkv::createDir | logkv::deleteData);
+
+    MacroPartialObj p1(1, heavyOriginal, 100);
+    store.update(k1, p1);
+
+    store.save();
+  }
+
+  {
+    MacroStore store(dir_path);
+
+    assert(store.getObjects().at(k1).heavyData == heavyOriginal);
+
+    MacroPartialObj p = store.getObjects().at(k1);
+    p.counter = 200;
+    p.heavyData = heavyTransient;
+
+    store.update(k1, p);
+    store.flush();
+  }
+
+  {
+    MacroStore store(dir_path);
+    const auto& obj = store.getObjects().at(k1);
+
+    if (obj.counter != 200) {
+      throw std::runtime_error(
+        "Macro partial update failed: counter not updated.");
+    }
+
+    if (obj.heavyData == heavyTransient) {
+      throw std::runtime_error(
+        "FAILURE: The macro partial update persisted the "
+        "heavy data! Serialization is not porous.");
+    }
+
+    if (obj.heavyData != heavyOriginal) {
+      throw std::runtime_error(
+        "FAILURE: Heavy data corrupted/lost. Expected '" + heavyOriginal +
+        "' but found '" + obj.heavyData + "'");
+    }
+
+    {
+      std::cout << "  Subtest: Binary Inspection of _setFullSerialization..."
+                << std::endl;
+
+      std::string probeHeavy = "BINARY_PROBE_HEAVY_STRING";
+      MacroPartialObj probeObj(999, probeHeavy, 777);
+
+      std::vector<char> buffer(1024);
+
+      {
+        std::fill(buffer.begin(), buffer.end(), 0);
+        size_t written = logkv::serializer<MacroPartialObj>::write(
+          buffer.data(), buffer.size(), probeObj);
+
+        uint8_t header = static_cast<uint8_t>(buffer[0]);
+
+        if (header != 0x01) {
+          throw std::runtime_error(
+            "Binary Probe: Expected header 0x01 (Partial), got " +
+            std::to_string(header));
+        }
+
+        std::string rawData(buffer.data(), written);
+        if (rawData.find(probeHeavy) != std::string::npos) {
+          throw std::runtime_error(
+            "Binary Probe: Found heavy data in default partial mode!");
+        }
+      }
+
+      {
+        MacroPartialObj::_setFullSerialization(true);
+
+        std::fill(buffer.begin(), buffer.end(), 0);
+        size_t written = logkv::serializer<MacroPartialObj>::write(
+          buffer.data(), buffer.size(), probeObj);
+
+        uint8_t header = static_cast<uint8_t>(buffer[0]);
+
+        if (header != 0x00) {
+          throw std::runtime_error(
+            "Binary Probe: Expected header 0x00 (Full), got " +
+            std::to_string(header));
+        }
+
+        std::string rawData(buffer.data(), written);
+        if (rawData.find(probeHeavy) == std::string::npos) {
+          throw std::runtime_error(
+            "Binary Probe: Heavy data missing in Forced Full mode!");
+        }
+
+        MacroPartialObj::_setFullSerialization(false);
+      }
+
+      {
+        std::fill(buffer.begin(), buffer.end(), 0);
+        size_t written = logkv::serializer<MacroPartialObj>::write(
+          buffer.data(), buffer.size(), probeObj);
+
+        uint8_t header = static_cast<uint8_t>(buffer[0]);
+        if (header != 0x01) {
+          throw std::runtime_error(
+            "Binary Probe: Flag reset failed. Expected 0x01, got " +
+            std::to_string(header));
+        }
+      }
+    }
+  }
+
+  cleanup_test_directory(dir_path);
+  std::cout << "test_store_macro_partial_serialization PASSED." << std::endl;
+}
+
 int main() {
 
   if (!std::filesystem::exists(TEST_BASE_DIR)) {
@@ -830,6 +1147,8 @@ int main() {
     test_store_buffer_resizing();
     test_store_key_types();
     test_store_iterators();
+    test_store_partial_serialization();
+    test_store_macro_partial_serialization();
 
     std::cout << "\nALL Store tests PASSED successfully!" << std::endl;
 

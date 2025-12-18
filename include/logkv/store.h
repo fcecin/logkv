@@ -277,12 +277,18 @@ private:
       while (totalBytesRead < fsize) {
         K key;
         totalBytesRead += readObject(f, key);
-        V value;
-        totalBytesRead += readObject(f, value);
-        if (logkv::serializer<V>::is_empty(value)) {
-          objects_.erase(std::move(key));
+        auto it = objects_.find(key);
+        if (it != objects_.end()) {
+          totalBytesRead += readObject(f, it->second);
+          if (logkv::serializer<V>::is_empty(it->second)) {
+            objects_.erase(it);
+          }
         } else {
-          objects_[std::move(key)] = std::move(value);
+          V value;
+          totalBytesRead += readObject(f, value);
+          if (!logkv::serializer<V>::is_empty(value)) {
+            objects_[std::move(key)] = std::move(value);
+          }
         }
       }
     } catch (...) {
@@ -551,7 +557,10 @@ public:
     }
     objects_.clear();
     if (sf) {
-      if (!replay(sf)) {
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(true));
+      bool ok = replay(sf);
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(false));
+      if (!ok) {
         closeFile(sf);
         throw std::runtime_error("corrupted snapshot");
       }
