@@ -1,4 +1,6 @@
-#pragma once
+#ifndef _LOGKV_AUTOSER_PARTIAL_H_
+#define _LOGKV_AUTOSER_PARTIAL_H_
+
 #include <logkv/autoser.h>
 #include <tuple>
 #include <type_traits>
@@ -10,6 +12,8 @@ namespace logkv {
 // Use AUTO_PARTIAL_SERIALIZABLE_MEMBERS to specify the partial members.
 // Use AUTO_SERIALIZABLE_MEMBERS to specify serializable members in full mode.
 // Calling _setFullSerialization() controls per-thread serialization mode.
+// _logkvStoreSnapshot(bool s) is called by logkv::Store to inform the type
+// being serialized of whether the deser context is Store snapshot or update.
 // ----------------------------------------------------------------------------
 
 struct ObjectEncoding {
@@ -123,3 +127,5 @@ struct serializer<
   static bool _logkvStoreSnapshot() { return _logkv_snapshot_flag; }           \
   static void _setFullSerialization(bool f) { _full_serialization_flag = f; }  \
   static bool _getFullSerialization() { return _full_serialization_flag; }
+
+  #endif

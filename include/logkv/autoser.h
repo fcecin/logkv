@@ -56,6 +56,10 @@
  * #include <logkv/pfr.h>
  * - Any type that satisfies std::is_aggregate_v (uses Boost::PFR)
  *
+ * #include <logkv/partial.h>
+ * - Supports a simple switch between a full and a partial serialization
+ *   mode for composite types; integrated with logkv::Store snapshotting.
+ *
  * Support for other types T can be added via serializable<T> or
  * composite_traits<T> template specializations.
  *
@@ -584,4 +588,4 @@ struct composite_traits<
   auto _as_const_member_tie() const { return std::tie(__VA_ARGS__); }          \
   auto _as_member_tie() { return std::tie(__VA_ARGS__); }
 
-#endif // _LOGKV_AUTOSER_H_
+#endif

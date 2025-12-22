@@ -39,4 +39,4 @@ struct composite_traits<
 
 } // namespace logkv
 
-#endif // _LOGKV_AUTOSER_PFR_H_
+#endif
