@@ -59,6 +59,13 @@ enum StoreSaveMode {
  * K,V mapping changes to an event log and knows how to load and save M
  * snapshots from and to persisted storage.
  *
+ * Type V must have logkv::serializer<V> implemented; see `logkv/serializer.h`.
+ * There is built-in serialization for several types; see `logkv/autoser.h`.
+ *
+ * When implementing a custom serializer, `logkv::Store` will notify the
+ * serializer of snapshot events via `_logkvStoreSnapshot(bool)`; see
+ * `logkv/partial.h` for a concrete example.
+ *
  * NOTE: An absent key K is equivalent to a key K mapped to an empty value V.
  * `update()` keeps K,V mappings with an empty value V, but keys K with an empty
  * value V are _not_ stored in snapshots (`save()`).
@@ -69,7 +76,7 @@ private:
   M<K, V> objects_;
   FILE* events_ = nullptr;
   int flags_ = StoreFlags::none;
-  Bytes buffer_;
+  std::vector<char> buffer_;
   size_t writeOffset_ = 0;
   size_t readOffset_ = 0;
   bool loaded_ = false;
@@ -217,7 +224,7 @@ private:
         while (targetSz < used) {
           targetSz *= 2;
         }
-        Bytes newbuf(targetSz);
+        std::vector<char> newbuf(targetSz);
         std::memmove(newbuf.data(), buffer_.data() + readOffset_, avail);
         buffer_ = std::move(newbuf);
       } else {

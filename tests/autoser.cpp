@@ -6,6 +6,7 @@
 using SockAddr = boost::asio::ip::udp::endpoint;
 
 #include <logkv/autoser/bytes.h>
+#include <logkv/bytes.h>
 
 #include <iostream>
 

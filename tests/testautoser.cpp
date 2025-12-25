@@ -4,6 +4,8 @@
 #include <logkv/autoser/pfr.h>
 #include <logkv/autoser/pushback.h>
 
+#include <logkv/bytes.h>
+
 #include <iostream>
 #include <sstream>
 #include <variant>

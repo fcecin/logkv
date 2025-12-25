@@ -6,6 +6,8 @@
 #include <logkv/autoser/partial.h>
 #include <logkv/autoser/pushback.h>
 
+#include <logkv/bytes.h>
+
 #include <iostream>
 
 #include <boost/unordered/unordered_flat_map.hpp>
@@ -1113,7 +1115,7 @@ void test_store_macro_partial_serialization() {
 
       {
         std::fill(buffer.begin(), buffer.end(), 0);
-        size_t written = logkv::serializer<MacroPartialObj>::write(
+        size_t written [[maybe_unused]] = logkv::serializer<MacroPartialObj>::write(
           buffer.data(), buffer.size(), probeObj);
 
         uint8_t header = static_cast<uint8_t>(buffer[0]);

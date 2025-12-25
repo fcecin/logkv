@@ -1,6 +1,8 @@
 #include <logkv/store.h>
 using namespace logkv;
 
+#include <logkv/bytes.h>
+
 #include <boost/unordered/unordered_flat_map.hpp>
 
 #include <iostream>

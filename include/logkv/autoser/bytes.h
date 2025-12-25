@@ -5,13 +5,11 @@
 
 #include <string>
 #include <vector>
-#include <logkv/bytes.h>
 
 namespace logkv {
 
 // ----------------------------------------------------------------------------
-// std::string, logkv::Bytes, logkv::Hash
-// std::vector<T> for sizeof(T) == 1 && std::is_trivial_v(T)
+// std::string, std::vector<T> for sizeof(T) == 1 && std::is_trivial_v(T)
 // ----------------------------------------------------------------------------
 
 // Template for all size(), data(), resize() contiguous-memory byte heaps

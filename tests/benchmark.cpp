@@ -4,6 +4,7 @@
 using namespace logkv;
 
 #include <logkv/autoser/bytes.h>
+#include <logkv/bytes.h>
 
 #include <chrono>
 #include <filesystem>
