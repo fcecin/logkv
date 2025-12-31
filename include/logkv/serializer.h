@@ -40,6 +40,9 @@ namespace logkv {
  */
 template <typename T, typename Enable = void> struct serializer;
 
+#define LOGKV_IS_EMPTY(val)                                                    \
+  logkv::serializer<std::decay_t<decltype(val)>>::is_empty(val)
+
 } // namespace logkv
 
 #endif
