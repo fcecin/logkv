@@ -633,6 +633,10 @@ public:
     if (!loaded_) {
       throw std::runtime_error("cannot save() without calling load() first");
     }
+    if (events_) {
+      fclose(events_);
+      events_ = nullptr;
+    }
 #if !LOGKV_WINDOWS
     if (mode == StoreSaveMode::forkSave) {
       int status;
@@ -643,10 +647,6 @@ public:
       if (pid == -1) {
         throw std::runtime_error("fork() failed");
       } else if (pid == 0) { // Child
-        if (events_) {
-          fclose(events_);
-          events_ = nullptr;
-        }
         try {
           writeSnapshot(snapshotTime);
           deleteOldSnapshotsAndEvents(snapshotTime);
@@ -656,8 +656,6 @@ public:
         _exit(0);
       } else { // Parent
         time_ = snapshotTime;
-        closeFile(events_);
-        events_ = nullptr;
         openEventsFile();
         return pid;
       }
@@ -667,8 +665,6 @@ public:
     uint64_t snapshotTime = time_ + 1;
     writeSnapshot(snapshotTime);
     time_ = snapshotTime;
-    closeFile(events_);
-    events_ = nullptr;
     openEventsFile();
     if (mode == StoreSaveMode::syncSave) {
       deleteOldSnapshotsAndEvents(snapshotTime);
