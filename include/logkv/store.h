@@ -70,10 +70,379 @@ enum StoreSaveMode {
  * `update()` keeps K,V mappings with an empty value V, but keys K with an empty
  * value V are _not_ stored in snapshots (`save()`).
  */
-template <template <typename, typename> class M, typename K, typename V>
-class Store {
+template <template <typename...> class M, typename K, typename V> class Store {
+public:
+  using map_type = M<K, V>;
+  using key_type = K;
+  using mapped_type = V;
+  using value_type = typename map_type::value_type;
+  using iterator = typename map_type::iterator;
+  using const_iterator = typename map_type::const_iterator;
+
+  /**
+   * Constuct a Store that will operate in the given data directory.
+   * If `StoreFlags::deferLoad` is specified without specifying both
+   * `StoreFlags::createDir` and `StoreFlags::deleteData` as well, you must call
+   * `load()` immediately afterwards.
+   * @param dir Backing data directory for the store.
+   * @param bufferSize Initial size of the I/O buffer (default: 1MB).
+   * @param flags Store options (see `logkv::StoreFlags` enum).
+   */
+  Store(const std::string& dir, int flags = StoreFlags::none,
+        size_t bufferSize = defaultBufferSize)
+      : flags_(flags), buffer_(bufferSize) {
+    if (!logkv::serializer<mapped_type>::is_empty(emptyValue_)) {
+      throw std::runtime_error(
+        std::string("detected a non-empty default-constructed value for a "
+                    "logkv::Store mapped type: ") +
+        typeid(mapped_type).name());
+    }
+    IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(false));
+    setDirectory(dir);
+  }
+
+  /**
+   * Destructor.
+   * NOTE: Does NOT flush any pending events; `flush()` must be called
+   * before the store object is destroyed to persist buffered events.
+   */
+  virtual ~Store() {
+    if (events_) {
+      closeFile(events_);
+    }
+  }
+
+  /**
+   * Get internal buffer size.
+   * @return Buffer size.
+   */
+  size_t getBufferSize() const { return buffer_.size(); }
+
+  /**
+   * Get internal buffer read offset.
+   * @return Buffer read offset.
+   */
+  size_t getBufferReadOffset() const { return readOffset_; }
+
+  /**
+   * Get internal buffer write offset.
+   * @return Buffer write offset.
+   */
+  size_t getBufferWriteOffset() const { return writeOffset_; }
+
+  /**
+   * Get internal time counter.
+   * @return Time counter.
+   */
+  uint64_t getTime() const { return time_; }
+
+  /**
+   * Get loaded status.
+   * @return `true` if `load()` was already called for the current data
+   * directory, `false` otherwise.
+   */
+  bool isLoaded() const { return loaded_; }
+
+  /**
+   * Get the data directory.
+   * @return The data directory.
+   */
+  std::string getDirectory() const { return dir_; }
+
+  /**
+   * Change the current working directory. Loads the data in the directory
+   * unless `StoreFlags::deferLoad` is set.
+   * NOTE: If `StoreFlags::deferLoad` was set, you must call `load()`
+   * immediately afterwards, unless both `StoreFlags::createDir` and
+   * `StoreFlags::deleteData` were set.
+   * @param dir Backing data directory for the store.
+   */
+  void setDirectory(const std::string& dir) {
+    if (dir == dir_) {
+      return;
+    }
+    bool exists = std::filesystem::exists(dir);
+    bool isDir = std::filesystem::is_directory(dir);
+    if (exists && !isDir) {
+      throw std::runtime_error("directory path is not a directory");
+    }
+    if (exists && isDir) {
+      closeEventsFile();
+      dir_ = dir;
+      if (flags_ & StoreFlags::deleteData) {
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+          if (entry.is_regular_file()) {
+            const auto& path = entry.path();
+            auto ext = path.extension();
+            auto stem = path.stem().string();
+            if ((ext == ".events" || ext == ".snapshot") &&
+                std::all_of(stem.begin(), stem.end(), ::isdigit)) {
+              std::filesystem::remove(path);
+            }
+          }
+        }
+        load();
+      } else if (!(flags_ & StoreFlags::deferLoad)) {
+        load();
+      } else {
+        loaded_ = false;
+      }
+    } else {
+      if (flags_ & StoreFlags::createDir) {
+        if (!std::filesystem::create_directories(dir)) {
+          throw std::runtime_error("cannot create directory");
+        }
+        closeEventsFile();
+        dir_ = dir;
+        load();
+      } else {
+        throw std::runtime_error("directory not found");
+      }
+    }
+  }
+
+  /**
+   * Get the underlying K,V map.
+   * The store's `objects_` field can and should be modified directly
+   * whenever it is not economical to write the object updates to disk.
+   * To later persist all so far unlogged updates, call `save()`.
+   * @return Reference to the underlying K,V map.
+   */
+  map_type& operator()() { return objects_; }
+
+  /**
+   * Get the underlying K,V map.
+   * The store's `objects_` field can and should be modified directly
+   * whenever it is not economical to write the object updates to disk.
+   * To later persist all so far unlogged updates, call `save()`.
+   * @return Reference to the underlying K,V map.
+   */
+  map_type& getObjects() { return objects_; }
+
+  /**
+   * Forward `operator[]` to backing K,V map for convenience.
+   * @param key Key to access
+   */
+  mapped_type& operator[](const key_type& key) { return objects_[key]; }
+
+  /**
+   * Update a K,V mapping, writing an event to the events log.
+   * @param key Key to set
+   * @param value Value to associate with the given key
+   */
+  void update(const key_type& key, const mapped_type& value) {
+    writeUpdate(events_, key, value);
+    objects_[key] = value;
+  }
+
+  /**
+   * Erase a K,V mapping, writing an event to the events log.
+   * @param key Key to erase
+   */
+  void erase(const key_type& key) {
+    auto it = objects_.find(key);
+    if (it != objects_.end()) {
+      writeErase(events_, key);
+      objects_.erase(it);
+    }
+  }
+
+  /**
+   * Iterator support.
+   */
+  iterator find(const key_type& key) { return objects_.find(key); }
+  const_iterator find(const key_type& key) const { return objects_.find(key); }
+  iterator begin() { return objects_.begin(); }
+  iterator end() { return objects_.end(); }
+  const_iterator begin() const { return objects_.begin(); }
+  const_iterator end() const { return objects_.end(); }
+  const_iterator cbegin() const { return objects_.cbegin(); }
+  const_iterator cend() const { return objects_.cend(); }
+
+  /**
+   * Update a K,V mapping, writing an event to the events log.
+   * @param it Pointer to the entry to modify
+   * @param value Value to write at the entry
+   */
+  void update(iterator it, const mapped_type& value) {
+    writeUpdate(events_, it->first, value);
+    it->second = value;
+  }
+
+  /**
+   * Erase the key at the iterator and write an event in the events log.
+   * @param it The entry to erase.
+   */
+  iterator erase(iterator it) {
+    writeErase(events_, it->first);
+    return objects_.erase(it);
+  }
+
+  /**
+   * Write an event in the events log for the given K,V entry.
+   * The caller has already modified the value for the key in place.
+   * @param it The entry to persist.
+   */
+  void persist(iterator it) { writeUpdate(events_, it->first, it->second); }
+
+  /**
+   * Flush any buffered writes to the events file.
+   * @param sync `true` to commit to disk, `false` otherwise.
+   */
+  void flush(bool sync = false) { flush(events_, sync); }
+
+  /**
+   * Clear the underlying K,V map, saving an empty snapshot.
+   */
+  void clear() {
+    objects_.clear();
+    save(StoreSaveMode::syncSave);
+  }
+
+  /**
+   * Load state from the store's directory, discarding any current state.
+   * Loads most recent snapshot, if any. Replays relevant event log, if any.
+   * @return `false` if latest events file was corrupted, `true` otherwise.
+   * @throws std::runtime_error if corrupted snapshot or a filesystem error.
+   */
+  bool load() {
+    std::vector<std::filesystem::path> snapshots;
+    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
+      if (!entry.is_regular_file()) {
+        continue;
+      }
+      auto stem = entry.path().stem().string();
+      if (entry.path().extension() == ".snapshot" &&
+          std::all_of(stem.begin(), stem.end(), ::isdigit)) {
+        snapshots.push_back(entry.path());
+      }
+    }
+    FILE* sf = nullptr;
+    if (!snapshots.empty()) {
+      std::sort(snapshots.begin(), snapshots.end());
+      auto last = snapshots.back();
+      time_ = std::stoull(last.stem().string());
+      sf = fopen(last.string().c_str(), "rb");
+      if (!sf) {
+        throw std::runtime_error("cannot open snapshot file for reading");
+      }
+    }
+    objects_.clear();
+    if (sf) {
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(true));
+      bool ok = replay(sf);
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(false));
+      if (!ok) {
+        closeFile(sf);
+        throw std::runtime_error("corrupted snapshot");
+      }
+      closeFile(sf);
+    } else {
+      time_ = 0;
+    }
+    uint64_t expectedTime = time_;
+    std::vector<uint64_t> eventTimes;
+    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
+      if (!entry.is_regular_file())
+        continue;
+      auto path = entry.path();
+      if (path.extension() != ".events")
+        continue;
+      auto stem = path.stem().string();
+      if (!std::all_of(stem.begin(), stem.end(), ::isdigit))
+        continue;
+      uint64_t fileNum = std::stoull(stem);
+      if (fileNum >= time_) {
+        eventTimes.push_back(fileNum);
+      }
+    }
+    std::sort(eventTimes.begin(), eventTimes.end());
+    bool corrupted = false;
+    for (uint64_t eventTime : eventTimes) {
+      if (eventTime != expectedTime) {
+        corrupted = true;
+      }
+      auto eventsPath =
+        std::filesystem::path(dir_) / (pad(eventTime) + ".events");
+      FILE* ef = fopen(eventsPath.string().c_str(), "rb");
+      if (!ef) {
+        throw std::runtime_error("cannot open events file for reading");
+      } else {
+        if (!replay(ef)) {
+          closeFile(ef);
+          std::filesystem::remove(eventsPath);
+          corrupted = true;
+        } else {
+          time_ = eventTime;
+        }
+        closeFile(ef);
+      }
+      expectedTime = eventTime + 1;
+    }
+    loaded_ = true;
+    if (corrupted) {
+      save(StoreSaveMode::syncSave);
+    }
+    closeEventsFile();
+    openEventsFile();
+    return !corrupted;
+  }
+
+  /**
+   * Save state to the store's directory.
+   * Deletes any and all snapshots and event logs and writes a fresh snapshot.
+   * @param mode Save mode (see `logkv::StoreSaveMode` enum).
+   * @throws std::exception on any filesystem, write or serialization error.
+   */
+  int save(int mode = StoreSaveMode::syncSave) {
+    if (!loaded_) {
+      throw std::runtime_error("cannot save() without calling load() first");
+    }
+    if (events_) {
+      fclose(events_);
+      events_ = nullptr;
+    }
+#if !LOGKV_WINDOWS
+    if (mode == StoreSaveMode::forkSave) {
+      int status;
+      while (waitpid(-1, &status, WNOHANG) > 0) {
+      }
+      uint64_t snapshotTime = time_ + 1;
+      pid_t pid = fork();
+      if (pid == -1) {
+        throw std::runtime_error("fork() failed");
+      } else if (pid == 0) { // Child
+        try {
+          writeSnapshot(snapshotTime);
+          deleteOldSnapshotsAndEvents(snapshotTime);
+        } catch (...) {
+          _exit(1);
+        }
+        _exit(0);
+      } else { // Parent
+        time_ = snapshotTime;
+        openEventsFile();
+        return pid;
+      }
+    }
+#endif
+
+    uint64_t snapshotTime = time_ + 1;
+    writeSnapshot(snapshotTime);
+    time_ = snapshotTime;
+    openEventsFile();
+    if (mode == StoreSaveMode::syncSave) {
+      deleteOldSnapshotsAndEvents(snapshotTime);
+    } else {
+      std::thread([this, snapshotTime]() {
+        deleteOldSnapshotsAndEvents(snapshotTime);
+      }).detach();
+    }
+    return 0;
+  }
+
 private:
-  M<K, V> objects_;
+  map_type objects_;
   FILE* events_ = nullptr;
   int flags_ = StoreFlags::none;
   std::vector<char> buffer_;
@@ -82,7 +451,7 @@ private:
   bool loaded_ = false;
   uint64_t time_ = 0;
   std::string dir_;
-  V emptyValue_{};
+  mapped_type emptyValue_{};
 
   static constexpr size_t defaultBufferSize = 1 << 19;
 
@@ -156,11 +525,11 @@ private:
     }
     writeOffset_ = 0;
     try {
-      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(true));
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(true));
       for (auto& [k, v] : objects_) {
         writeUpdate(sf, k, v);
       }
-      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(false));
+      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(false));
       flush(sf, true);
     } catch (std::exception& ex) {
       closeFile(sf);
@@ -282,18 +651,18 @@ private:
         return false;
       }
       while (totalBytesRead < fsize) {
-        K key;
+        key_type key;
         totalBytesRead += readObject(f, key);
         auto it = objects_.find(key);
         if (it != objects_.end()) {
           totalBytesRead += readObject(f, it->second);
-          if (logkv::serializer<V>::is_empty(it->second)) {
+          if (logkv::serializer<mapped_type>::is_empty(it->second)) {
             objects_.erase(it);
           }
         } else {
-          V value;
+          mapped_type value;
           totalBytesRead += readObject(f, value);
-          if (!logkv::serializer<V>::is_empty(value)) {
+          if (!logkv::serializer<mapped_type>::is_empty(value)) {
             objects_[std::move(key)] = std::move(value);
           }
         }
@@ -304,377 +673,12 @@ private:
     return true;
   }
 
-  void writeUpdate(FILE* f, const K& key, const V& value) {
+  void writeUpdate(FILE* f, const key_type& key, const mapped_type& value) {
     writeObject(f, key);
     writeObject(f, value);
   }
 
-  void writeErase(FILE* f, const K& key) { writeUpdate(f, key, emptyValue_); }
-
-public:
-  /**
-   * Constuct a Store that will operate in the given data directory.
-   * If `StoreFlags::deferLoad` is specified without specifying both
-   * `StoreFlags::createDir` and `StoreFlags::deleteData` as well, you must call
-   * `load()` immediately afterwards.
-   * @param dir Backing data directory for the store.
-   * @param bufferSize Initial size of the I/O buffer (default: 1MB).
-   * @param flags Store options (see `logkv::StoreFlags` enum).
-   */
-  Store(const std::string& dir, int flags = StoreFlags::none,
-        size_t bufferSize = defaultBufferSize)
-      : flags_(flags), buffer_(bufferSize) {
-    if (!logkv::serializer<V>::is_empty(emptyValue_)) {
-      throw std::runtime_error(
-        std::string("detected a non-empty default-constructed value for a "
-                    "logkv::Store mapped type: ") +
-        typeid(V).name());
-    }
-    IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(false));
-    setDirectory(dir);
-  }
-
-  /**
-   * Destructor.
-   * NOTE: Does NOT flush any pending events; `flush()` must be called
-   * before the store object is destroyed to persist buffered events.
-   */
-  virtual ~Store() {
-    if (events_) {
-      closeFile(events_);
-    }
-  }
-
-  /**
-   * Get internal buffer size.
-   * @return Buffer size.
-   */
-  size_t getBufferSize() const { return buffer_.size(); }
-
-  /**
-   * Get internal buffer read offset.
-   * @return Buffer read offset.
-   */
-  size_t getBufferReadOffset() const { return readOffset_; }
-
-  /**
-   * Get internal buffer write offset.
-   * @return Buffer write offset.
-   */
-  size_t getBufferWriteOffset() const { return writeOffset_; }
-
-  /**
-   * Get internal time counter.
-   * @return Time counter.
-   */
-  uint64_t getTime() const { return time_; }
-
-  /**
-   * Get loaded status.
-   * @return `true` if `load()` was already called for the current data
-   * directory, `false` otherwise.
-   */
-  bool isLoaded() const { return loaded_; }
-
-  /**
-   * Get the data directory.
-   * @return The data directory.
-   */
-  std::string getDirectory() const { return dir_; }
-
-  /**
-   * Change the current working directory. Loads the data in the directory
-   * unless `StoreFlags::deferLoad` is set.
-   * NOTE: If `StoreFlags::deferLoad` was set, you must call `load()`
-   * immediately afterwards, unless both `StoreFlags::createDir` and
-   * `StoreFlags::deleteData` were set.
-   * @param dir Backing data directory for the store.
-   */
-  void setDirectory(const std::string& dir) {
-    if (dir == dir_) {
-      return;
-    }
-    bool exists = std::filesystem::exists(dir);
-    bool isDir = std::filesystem::is_directory(dir);
-    if (exists && !isDir) {
-      throw std::runtime_error("directory path is not a directory");
-    }
-    if (exists && isDir) {
-      closeEventsFile();
-      dir_ = dir;
-      if (flags_ & StoreFlags::deleteData) {
-        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
-          if (entry.is_regular_file()) {
-            const auto& path = entry.path();
-            auto ext = path.extension();
-            auto stem = path.stem().string();
-            if ((ext == ".events" || ext == ".snapshot") &&
-                std::all_of(stem.begin(), stem.end(), ::isdigit)) {
-              std::filesystem::remove(path);
-            }
-          }
-        }
-        load();
-      } else if (!(flags_ & StoreFlags::deferLoad)) {
-        load();
-      } else {
-        loaded_ = false;
-      }
-    } else {
-      if (flags_ & StoreFlags::createDir) {
-        if (!std::filesystem::create_directories(dir)) {
-          throw std::runtime_error("cannot create directory");
-        }
-        closeEventsFile();
-        dir_ = dir;
-        load();
-      } else {
-        throw std::runtime_error("directory not found");
-      }
-    }
-  }
-
-  /**
-   * Get the underlying K,V map.
-   * The store's `objects_` field can and should be modified directly
-   * whenever it is not economical to write the object updates to disk.
-   * To later persist all so far unlogged updates, call `save()`.
-   * @return Reference to the underlying K,V map.
-   */
-  M<K, V>& operator()() { return objects_; }
-
-  /**
-   * Get the underlying K,V map.
-   * The store's `objects_` field can and should be modified directly
-   * whenever it is not economical to write the object updates to disk.
-   * To later persist all so far unlogged updates, call `save()`.
-   * @return Reference to the underlying K,V map.
-   */
-  M<K, V>& getObjects() { return objects_; }
-
-  /**
-   * Forward `operator[]` to backing K,V map for convenience.
-   * @param key Key to access
-   */
-  V& operator[](const K& key) { return objects_[key]; }
-
-  /**
-   * Update a K,V mapping, writing an event to the events log.
-   * @param key Key to set
-   * @param value Value to associate with the given key
-   */
-  void update(const K& key, const V& value) {
-    writeUpdate(events_, key, value);
-    objects_[key] = value;
-  }
-
-  /**
-   * Erase a K,V mapping, writing an event to the events log.
-   * @param key Key to erase
-   */
-  void erase(const K& key) {
-    auto it = objects_.find(key);
-    if (it != objects_.end()) {
-      writeErase(events_, key);
-      objects_.erase(it);
-    }
-  }
-
-  /**
-   * Iterator support.
-   */
-  using iterator = typename M<K, V>::iterator;
-  using const_iterator = typename M<K, V>::const_iterator;
-  iterator find(const K& key) { return objects_.find(key); }
-  const_iterator find(const K& key) const { return objects_.find(key); }
-  iterator begin() { return objects_.begin(); }
-  iterator end() { return objects_.end(); }
-  const_iterator begin() const { return objects_.begin(); }
-  const_iterator end() const { return objects_.end(); }
-  const_iterator cbegin() const { return objects_.cbegin(); }
-  const_iterator cend() const { return objects_.cend(); }
-
-  /**
-   * Update a K,V mapping, writing an event to the events log.
-   * @param it Pointer to the entry to modify
-   * @param value Value to write at the entry
-   */
-  void update(iterator it, const V& value) {
-    writeUpdate(events_, it->first, value);
-    it->second = value;
-  }
-
-  /**
-   * Erase the key at the iterator and write an event in the events log.
-   * @param it The entry to erase.
-   */
-  iterator erase(iterator it) {
-    writeErase(events_, it->first);
-    return objects_.erase(it);
-  }
-
-  /**
-   * Write an event in the events log for the given K,V entry.
-   * The caller has already modified the value for the key in place.
-   * @param it The entry to persist.
-   */
-  void persist(iterator it) { writeUpdate(events_, it->first, it->second); }
-
-  /**
-   * Flush any buffered writes to the events file.
-   * @param sync `true` to commit to disk, `false` otherwise.
-   */
-  void flush(bool sync = false) { flush(events_, sync); }
-
-  /**
-   * Clear the underlying K,V map, saving an empty snapshot.
-   */
-  void clear() {
-    objects_.clear();
-    save(StoreSaveMode::syncSave);
-  }
-
-  /**
-   * Load state from the store's directory, discarding any current state.
-   * Loads most recent snapshot, if any. Replays relevant event log, if any.
-   * @return `false` if latest events file was corrupted, `true` otherwise.
-   * @throws std::runtime_error if corrupted snapshot or a filesystem error.
-   */
-  bool load() {
-    std::vector<std::filesystem::path> snapshots;
-    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
-      if (!entry.is_regular_file()) {
-        continue;
-      }
-      auto stem = entry.path().stem().string();
-      if (entry.path().extension() == ".snapshot" &&
-          std::all_of(stem.begin(), stem.end(), ::isdigit)) {
-        snapshots.push_back(entry.path());
-      }
-    }
-    FILE* sf = nullptr;
-    if (!snapshots.empty()) {
-      std::sort(snapshots.begin(), snapshots.end());
-      auto last = snapshots.back();
-      time_ = std::stoull(last.stem().string());
-      sf = fopen(last.string().c_str(), "rb");
-      if (!sf) {
-        throw std::runtime_error("cannot open snapshot file for reading");
-      }
-    }
-    objects_.clear();
-    if (sf) {
-      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(true));
-      bool ok = replay(sf);
-      IF_CONSTEXPR_REQUIRES_EXPR_EXPR(V::_logkvStoreSnapshot(false));
-      if (!ok) {
-        closeFile(sf);
-        throw std::runtime_error("corrupted snapshot");
-      }
-      closeFile(sf);
-    } else {
-      time_ = 0;
-    }
-    uint64_t expectedTime = time_;
-    std::vector<uint64_t> eventTimes;
-    for (const auto& entry : std::filesystem::directory_iterator(dir_)) {
-      if (!entry.is_regular_file())
-        continue;
-      auto path = entry.path();
-      if (path.extension() != ".events")
-        continue;
-      auto stem = path.stem().string();
-      if (!std::all_of(stem.begin(), stem.end(), ::isdigit))
-        continue;
-      uint64_t fileNum = std::stoull(stem);
-      if (fileNum >= time_) {
-        eventTimes.push_back(fileNum);
-      }
-    }
-    std::sort(eventTimes.begin(), eventTimes.end());
-    bool corrupted = false;
-    for (uint64_t eventTime : eventTimes) {
-      if (eventTime != expectedTime) {
-        corrupted = true;
-      }
-      auto eventsPath =
-        std::filesystem::path(dir_) / (pad(eventTime) + ".events");
-      FILE* ef = fopen(eventsPath.string().c_str(), "rb");
-      if (!ef) {
-        throw std::runtime_error("cannot open events file for reading");
-      } else {
-        if (!replay(ef)) {
-          closeFile(ef);
-          std::filesystem::remove(eventsPath);
-          corrupted = true;
-        } else {
-          time_ = eventTime;
-        }
-        closeFile(ef);
-      }
-      expectedTime = eventTime + 1;
-    }
-    loaded_ = true;
-    if (corrupted) {
-      save(StoreSaveMode::syncSave);
-    }
-    closeEventsFile();
-    openEventsFile();
-    return !corrupted;
-  }
-
-  /**
-   * Save state to the store's directory.
-   * Deletes any and all snapshots and event logs and writes a fresh snapshot.
-   * @param mode Save mode (see `logkv::StoreSaveMode` enum).
-   * @throws std::exception on any filesystem, write or serialization error.
-   */
-  int save(int mode = StoreSaveMode::syncSave) {
-    if (!loaded_) {
-      throw std::runtime_error("cannot save() without calling load() first");
-    }
-    if (events_) {
-      fclose(events_);
-      events_ = nullptr;
-    }
-#if !LOGKV_WINDOWS
-    if (mode == StoreSaveMode::forkSave) {
-      int status;
-      while (waitpid(-1, &status, WNOHANG) > 0) {
-      }
-      uint64_t snapshotTime = time_ + 1;
-      pid_t pid = fork();
-      if (pid == -1) {
-        throw std::runtime_error("fork() failed");
-      } else if (pid == 0) { // Child
-        try {
-          writeSnapshot(snapshotTime);
-          deleteOldSnapshotsAndEvents(snapshotTime);
-        } catch (...) {
-          _exit(1);
-        }
-        _exit(0);
-      } else { // Parent
-        time_ = snapshotTime;
-        openEventsFile();
-        return pid;
-      }
-    }
-#endif
-
-    uint64_t snapshotTime = time_ + 1;
-    writeSnapshot(snapshotTime);
-    time_ = snapshotTime;
-    openEventsFile();
-    if (mode == StoreSaveMode::syncSave) {
-      deleteOldSnapshotsAndEvents(snapshotTime);
-    } else {
-      std::thread([this, snapshotTime]() {
-        deleteOldSnapshotsAndEvents(snapshotTime);
-      }).detach();
-    }
-    return 0;
-  }
+  void writeErase(FILE* f, const key_type& key) { writeUpdate(f, key, emptyValue_); }
 };
 
 } // namespace logkv
