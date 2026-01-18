@@ -25,6 +25,7 @@
 #endif
 
 #include <logkv/autoser/bytes.h>
+#include <logkv/crc.h>
 
 #define IF_CONSTEXPR_REQUIRES_EXPR_EXPR(expr)                                  \
   if constexpr (requires { expr; }) {                                          \
@@ -69,6 +70,13 @@ enum StoreSaveMode {
  * NOTE: An absent key K is equivalent to a key K mapped to an empty value V.
  * `update()` keeps K,V mappings with an empty value V, but keys K with an empty
  * value V are _not_ stored in snapshots (`save()`).
+ *
+ * NOTE: To guarantee that a sequence of updates will be applied atomically,
+ * they must all be written within the same frame (buffer flush cycle). There's
+ * no transactional API to guarantee that, but `getBufferWriteRemaining()` plus
+ * application knowledge of the serialization overhead of its own objects can be
+ * used to decide when to `flush()` to start a new frame and guarantee the
+ * following object writes will end up on the same frame and thus be atomic.
  */
 template <template <typename...> class M, typename K, typename V> class Store {
 public:
@@ -80,6 +88,26 @@ public:
   using const_iterator = typename map_type::const_iterator;
 
   /**
+   * Default internal buffer size in bytes (512KB).
+   */
+  static constexpr size_t DefaultBufferSize = 1 << 19;
+
+  /**
+   * Maximum size of a single object, frame, and internal buffer (512MB).
+   */
+  static constexpr size_t MaxBufferSize = 1 << 29;
+
+  /**
+   * Minimum payload size in bytes protected by CRC32 instead of CRC16.
+   * CRC32 offers significantly better error protection than CRC16 (and faster
+   * with hardware acceleration), but still it's 4 bytes of overhead vs 2.
+   * For applications that flush tiny objects after each store change (e.g.
+   * transactional systems) the extra bytes could be significant.
+   * To instead force CRC32 on all frame writes, call `setForceCRC32(true)`.
+   */
+  static constexpr size_t MinCRC32PayloadSize = 512;
+
+  /**
    * Constuct a Store that will operate in the given data directory.
    * If `StoreFlags::deferLoad` is specified without specifying both
    * `StoreFlags::createDir` and `StoreFlags::deleteData` as well, you must call
@@ -89,7 +117,7 @@ public:
    * @param flags Store options (see `logkv::StoreFlags` enum).
    */
   Store(const std::string& dir, int flags = StoreFlags::none,
-        size_t bufferSize = defaultBufferSize)
+        size_t bufferSize = DefaultBufferSize)
       : flags_(flags), buffer_(bufferSize) {
     if (!logkv::serializer<mapped_type>::is_empty(emptyValue_)) {
       throw std::runtime_error(
@@ -119,6 +147,23 @@ public:
   size_t getBufferSize() const { return buffer_.size(); }
 
   /**
+   * Resizes internal buffer.
+   * @param size New size in bytes.
+   */
+  void setBufferSize(size_t size) {
+    if (!size || size > MaxBufferSize) {
+      throw std::runtime_error("invalid buffer size");
+    }
+    if (writeOffset_ > 0) {
+      if (!events_) {
+        throw std::runtime_error("event file handle is null");
+      }
+      writeFrame(events_);
+    }
+    buffer_.resize(size);
+  }
+
+  /**
    * Get internal buffer read offset.
    * @return Buffer read offset.
    */
@@ -129,6 +174,27 @@ public:
    * @return Buffer write offset.
    */
   size_t getBufferWriteOffset() const { return writeOffset_; }
+
+  /**
+   * Get remaining read capacity.
+   * @return Remaining readable bytes in the buffer.
+   */
+  size_t getBufferReadRemaining() const { return writeOffset_ - readOffset_; }
+
+  /**
+   * Get remaining write capacity.
+   * @return Remaining buffer space to write before it will auto-flush.
+   */
+  size_t getBufferWriteRemaining() const {
+    return buffer_.size() - writeOffset_;
+  }
+
+  /**
+   * Configure whether CRC32 should always be used.
+   * @param force If true, all frames will use CRC32 regardless of size.
+   * If false (default), CRC16 is used for frames smaller than 512 bytes.
+   */
+  void setForceCRC32(bool force) { forceCRC32_ = force; }
 
   /**
    * Get internal time counter.
@@ -332,11 +398,10 @@ public:
       IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(true));
       bool ok = replay(sf);
       IF_CONSTEXPR_REQUIRES_EXPR_EXPR(mapped_type::_logkvStoreSnapshot(false));
+      closeFile(sf);
       if (!ok) {
-        closeFile(sf);
         throw std::runtime_error("corrupted snapshot");
       }
-      closeFile(sf);
     } else {
       time_ = 0;
     }
@@ -368,14 +433,14 @@ public:
       if (!ef) {
         throw std::runtime_error("cannot open events file for reading");
       } else {
-        if (!replay(ef)) {
-          closeFile(ef);
+        bool replayOk = replay(ef);
+        closeFile(ef);
+        if (!replayOk) {
           std::filesystem::remove(eventsPath);
           corrupted = true;
         } else {
           time_ = eventTime;
         }
-        closeFile(ef);
       }
       expectedTime = eventTime + 1;
     }
@@ -448,12 +513,19 @@ private:
   std::vector<char> buffer_;
   size_t writeOffset_ = 0;
   size_t readOffset_ = 0;
+  bool forceCRC32_ = false;
   bool loaded_ = false;
   uint64_t time_ = 0;
   std::string dir_;
   mapped_type emptyValue_{};
 
-  static constexpr size_t defaultBufferSize = 1 << 19;
+  enum ReadResult {
+    RR_Success = 0,
+    RR_Frame_EOF = 1,
+    RR_Frame_Underflow = 2,
+    RR_Frame_Corrupted = 3,
+    RR_Object_Corrupted = 4
+  };
 
   std::string pad(uint64_t n) {
     std::ostringstream oss;
@@ -462,14 +534,7 @@ private:
   }
 
   void flush(FILE* f, bool sync = false) {
-    if (writeOffset_ > 0) {
-      bool err = fwrite(buffer_.data(), 1, writeOffset_, f) != writeOffset_ ||
-                 fflush(f) != 0;
-      writeOffset_ = 0;
-      if (err) {
-        throw std::runtime_error("file write error");
-      }
-    }
+    writeFrame(f);
     if (sync) {
 #if LOGKV_WINDOWS
       _commit(_fileno(f));
@@ -478,7 +543,6 @@ private:
 #endif
     }
   }
-
   void closeFile(FILE* f) {
     if (fclose(f) != 0) {
       throw std::runtime_error("cannot close file");
@@ -582,51 +646,136 @@ private:
     }
   }
 
-  template <typename T> size_t readObject(FILE* f, T& out) {
+  void writeFrame(FILE* f) {
+    if (writeOffset_ == 0)
+      return;
+    const uint32_t payloadSize = static_cast<uint32_t>(writeOffset_);
+    char headerBuf[8];
+    size_t headerIdx = 1;
+    /**
+     * First byte is the control byte:
+     * Bits 0-4: first 5 bits of the frame size.
+     * Bit 5: 1 = CRC32 (4 bytes), 0 = CRC16 (2 bytes).
+     * Bits 6-7: extra size bytes (0 to 3 bytes).
+     */
+    uint8_t control = payloadSize & 0x1F;
+    uint32_t extra = payloadSize >> 5;
+    bool isCRC32 = forceCRC32_ || (payloadSize >= MinCRC32PayloadSize);
+    if (isCRC32) {
+      control |= 0x20;
+    }
+    if (extra > 0) {
+      if (extra <= 0xFF) {
+        control |= 0x40; // 01 (1 extra byte)
+        headerBuf[headerIdx++] = static_cast<char>(extra);
+      } else if (extra <= 0xFFFF) {
+        control |= 0x80; // 10 (2 extra bytes)
+        uint16_t e = static_cast<uint16_t>(extra);
+        std::memcpy(headerBuf + headerIdx, &e, 2);
+        headerIdx += 2;
+      } else {
+        control |= 0xC0; // 11 (3 extra bytes)
+        std::memcpy(headerBuf + headerIdx, &extra, 3);
+        headerIdx += 3;
+      }
+    }
+    headerBuf[0] = control;
+    if (isCRC32) {
+      uint32_t checksum = logkv::computeCRC32(buffer_.data(), payloadSize);
+      std::memcpy(headerBuf + headerIdx, &checksum, 4);
+      headerIdx += 4;
+    } else {
+      uint16_t checksum = logkv::computeCRC16(buffer_.data(), payloadSize);
+      std::memcpy(headerBuf + headerIdx, &checksum, 2);
+      headerIdx += 2;
+    }
+    if (fwrite(headerBuf, 1, headerIdx, f) != headerIdx ||
+        fwrite(buffer_.data(), 1, payloadSize, f) != payloadSize ||
+        fflush(f) != 0) {
+      throw std::runtime_error("file write error");
+    }
+    writeOffset_ = 0;
+  }
+
+  /**
+   * Reads a frame from disk into the buffer and verifies integrity.
+   * Returns a `ReadResult` enum value, where 0 is success and any
+   * non-zero indicates failure.
+   */
+  int readFrame(FILE* f) {
+    uint8_t control = 0;
+    if (fread(&control, 1, 1, f) != 1) {
+      return RR_Frame_EOF;
+    }
+    const int extraLenBytes = (control >> 6) & 0x03;
+    const bool isCRC32 = (control & 0x20);
+    const int crcBytes = isCRC32 ? 4 : 2;
+    const int remainingHeaderSize = extraLenBytes + crcBytes;
+    char headerBuf[8];
+    if (fread(headerBuf, 1, remainingHeaderSize, f) !=
+        (size_t)remainingHeaderSize) {
+      return RR_Frame_Underflow; // truncated frame header
+    }
+    uint32_t payloadSize = (control & 0x1F);
+    if (extraLenBytes > 0) {
+      uint32_t extraValue = 0;
+      std::memcpy(&extraValue, headerBuf, extraLenBytes);
+      payloadSize |= (extraValue << 5);
+    }
+    uint32_t diskCRC = 0;
+    std::memcpy(&diskCRC, headerBuf + extraLenBytes, crcBytes);
+    if (buffer_.size() < payloadSize) {
+      buffer_.resize(payloadSize);
+    }
+    if (fread(buffer_.data(), 1, payloadSize, f) != payloadSize) {
+      return RR_Frame_Underflow; // truncated frame payload
+    }
+    if (isCRC32) {
+      uint32_t calcCRC = logkv::computeCRC32(buffer_.data(), payloadSize);
+      if (calcCRC != diskCRC) {
+        return RR_Frame_Corrupted;
+      }
+    } else {
+      uint16_t calcCRC = logkv::computeCRC16(buffer_.data(), payloadSize);
+      if (calcCRC != static_cast<uint16_t>(diskCRC)) {
+        return RR_Frame_Corrupted;
+      }
+    }
+    writeOffset_ = payloadSize;
+    readOffset_ = 0;
+    return RR_Success;
+  }
+
+  /**
+   * Returns a `ReadResult` enum value, where 0 is success and any
+   * non-zero indicates failure.
+   * Throwing anywhere in here means a corrupted file, and depending
+   * on the code returned it can also mean a corrupted file.
+   */
+  template <typename T> int readObject(FILE* f, T& out) {
+    if (readOffset_ >= writeOffset_) {
+      int rf = readFrame(f);
+      if (rf != RR_Success) {
+        return rf;
+      }
+    }
     const char* inptr = buffer_.data() + readOffset_;
     size_t avail = writeOffset_ - readOffset_;
     size_t used = logkv::serializer<T>::read(inptr, avail, out);
-    bool underflow = used > avail;
-    if (underflow) {
-      if (buffer_.size() < used) {
-        size_t targetSz = buffer_.size() * 2;
-        while (targetSz < used) {
-          targetSz *= 2;
-        }
-        std::vector<char> newbuf(targetSz);
-        std::memmove(newbuf.data(), buffer_.data() + readOffset_, avail);
-        buffer_ = std::move(newbuf);
-      } else {
-        if (avail > 0) {
-          std::memmove(buffer_.data(), buffer_.data() + readOffset_, avail);
-        }
-      }
-      readOffset_ = 0;
-      writeOffset_ = avail;
-      size_t r = fread(buffer_.data() + avail, 1, buffer_.size() - avail, f);
-      if (r == 0) {
-        throw std::runtime_error("file read error");
-      }
-      writeOffset_ += r;
-      return readObject(f, out);
+    if (used > avail) {
+      // Broken object deserializer code trying to read beyond its frame
+      return RR_Object_Corrupted;
     }
     readOffset_ += used;
-    return used;
+    return RR_Success;
   }
 
   template <typename T> size_t writeObject(FILE* f, const T& obj) {
     size_t avail = buffer_.size() - writeOffset_;
     size_t used =
       logkv::serializer<T>::write(buffer_.data() + writeOffset_, avail, obj);
-    bool overflow = used > avail;
-    if (overflow) {
-      if (writeOffset_ > 0) {
-        bool err = fwrite(buffer_.data(), 1, writeOffset_, f) != writeOffset_;
-        writeOffset_ = 0;
-        if (err) {
-          throw std::runtime_error("file write error");
-        }
-      }
+    if (used > avail) {
+      writeFrame(f);
       if (buffer_.size() < used) {
         size_t targetSz = buffer_.size() * 2;
         while (targetSz < used) {
@@ -644,24 +793,36 @@ private:
     writeOffset_ = 0;
     readOffset_ = 0;
     try {
-      long totalBytesRead = 0;
-      long fsize;
-      if (fseek(f, 0, SEEK_END) != 0 || (fsize = ftell(f)) == -1 ||
-          fseek(f, 0, SEEK_SET) != 0) {
+      if (fseek(f, 0, SEEK_SET) != 0) {
         return false;
       }
-      while (totalBytesRead < fsize) {
+      while (true) {
+        if (readOffset_ >= writeOffset_) {
+          // buffer empty; read next frame
+          int rf = readFrame(f);
+          if (rf == RR_Frame_EOF) {
+            break; // EOF reached cleanly between objects; replay done.
+          } else if (rf != RR_Success) {
+            return false;
+          }
+        }
         key_type key;
-        totalBytesRead += readObject(f, key);
+        if (readObject(f, key) != RR_Success) {
+          return false;
+        }
         auto it = objects_.find(key);
         if (it != objects_.end()) {
-          totalBytesRead += readObject(f, it->second);
+          if (readObject(f, it->second) != RR_Success) {
+            return false;
+          }
           if (logkv::serializer<mapped_type>::is_empty(it->second)) {
             objects_.erase(it);
           }
         } else {
           mapped_type value;
-          totalBytesRead += readObject(f, value);
+          if (readObject(f, value) != RR_Success) {
+            return false;
+          }
           if (!logkv::serializer<mapped_type>::is_empty(value)) {
             objects_[std::move(key)] = std::move(value);
           }
@@ -678,7 +839,9 @@ private:
     writeObject(f, value);
   }
 
-  void writeErase(FILE* f, const key_type& key) { writeUpdate(f, key, emptyValue_); }
+  void writeErase(FILE* f, const key_type& key) {
+    writeUpdate(f, key, emptyValue_);
+  }
 };
 
 } // namespace logkv

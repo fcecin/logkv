@@ -3,6 +3,7 @@
 # --- Configuration ---
 TEST_DIR="./tests"
 CLEAN_SCRIPT="clean.sh"
+RUNTEST_SCRIPT="runtest.sh"
 
 # --- ANSI Color Codes ---
 GREEN='\033[0;32m'
@@ -69,11 +70,14 @@ run_test() {
 
 # --- Main Execution ---
 
+echo -e "${BLUE}--- Running build.sh ---${NC}"
+build.sh
+
 echo -e "${BLUE}--- Running logkv Tests ---${NC}"
 GLOBAL_START_TIME=$(date +%s.%N)
 
 # 1. Find all test scripts excluding the cleanup script, and store their BASENAMES
-TEST_SCRIPT_BASENAMES=$(find "$TEST_DIR" -maxdepth 1 -type f -name "*.sh" ! -name "$CLEAN_SCRIPT" -exec basename {} \; | sort)
+TEST_SCRIPT_BASENAMES=$(find "$TEST_DIR" -maxdepth 1 -type f -name "*.sh" ! -name "$CLEAN_SCRIPT" ! -name "$RUNTEST_SCRIPT" -exec basename {} \; | sort)
 
 # Change directory to tests/ (required for scripts to find their source files)
 if [ -d "$TEST_DIR" ]; then
@@ -91,11 +95,11 @@ done
 
 # 3. Run the cleanup script last from within the tests/ directory
 echo
-echo -e "${YELLOW}--- Running Cleanup Script ---${NC}"
+echo -e "${BLUE}--- Running Cleanup Script ---${NC}"
 if [ -f "$CLEAN_SCRIPT" ]; then
     CLEAN_START_TIME=$(date +%s.%N)
     # Run the cleanup script using its basename (since we are in the directory)
-    if ("./$CLEAN_SCRIPT"); then
+    if ./$CLEAN_SCRIPT; then
         CLEAN_END_TIME=$(date +%s.%N)
         CLEAN_DURATION=$(echo "$CLEAN_END_TIME - $CLEAN_START_TIME" | bc -l)
         echo -e "${GREEN}PASS${NC}: $CLEAN_SCRIPT (Time: ${CLEAN_DURATION}s)"

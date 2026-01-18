@@ -410,6 +410,43 @@ template <typename... Args> struct serializer<std::tuple<Args...>> {
 };
 
 // ----------------------------------------------------------------------------
+// Serializer for std::pair
+// ----------------------------------------------------------------------------
+
+template <typename A, typename B> struct serializer<std::pair<A, B>> {
+  static size_t get_size(const std::pair<A, B>& p) {
+    return serializer<A>::get_size(p.first) + serializer<B>::get_size(p.second);
+  }
+
+  static bool is_empty(const std::pair<A, B>& p) {
+    return serializer<A>::is_empty(p.first) &&
+           serializer<B>::is_empty(p.second);
+  }
+
+  static size_t write(char* dest, size_t size, const std::pair<A, B>& p) {
+    Writer writer(dest, size);
+    try {
+      writer.write(p.first);
+      writer.write(p.second);
+    } catch (const insufficient_buffer& e) {
+      return writer.bytes_processed() + e.get_required_bytes();
+    }
+    return writer.bytes_processed();
+  }
+
+  static size_t read(const char* src, size_t size, std::pair<A, B>& p) {
+    Reader reader(src, size);
+    try {
+      reader.read(p.first);
+      reader.read(p.second);
+    } catch (const insufficient_buffer& e) {
+      return reader.bytes_processed() + e.get_required_bytes();
+    }
+    return reader.bytes_processed();
+  }
+};
+
+// ----------------------------------------------------------------------------
 // Serializer for any T that uses composite_traits<T>
 // ----------------------------------------------------------------------------
 
