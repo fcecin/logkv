@@ -246,6 +246,10 @@ void test_store_update_erase_flush_events() {
                                    events_file_name));
     assert(std::filesystem::file_size(std::filesystem::path(dir_path) /
                                       events_file_name) > 0);
+    assert(store.getEventsFileSize() > 0);
+    assert(store.getEventsFileSize() ==
+           std::filesystem::file_size(
+             std::filesystem::path(dir_path) / events_file_name));
     assert(store.getObjects().size() == 2);
     assert(store.getObjects().at(key1) == val1);
   }
@@ -289,6 +293,8 @@ void test_store_save_snapshot_with_data() {
     store.update(key2, val2);
 
     store.save();
+
+    assert(store.getEventsFileSize() == 0);
 
     std::string snapshot_name = test_pad_filename(1) + ".snapshot";
     std::string old_events_name = test_pad_filename(0) + ".events";

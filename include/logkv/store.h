@@ -203,6 +203,12 @@ public:
   uint64_t getTime() const { return time_; }
 
   /**
+   * Get the current events file size in bytes on disk.
+   * @return Events file size in bytes.
+   */
+  uint64_t getEventsFileSize() const { return eventsFileSize_; }
+
+  /**
    * Get loaded status.
    * @return `true` if `load()` was already called for the current data
    * directory, `false` otherwise.
@@ -466,6 +472,7 @@ public:
     if (events_) {
       fclose(events_);
       events_ = nullptr;
+      eventsFileSize_ = 0;
     }
 #if !LOGKV_WINDOWS
     if (mode == StoreSaveMode::forkSave) {
@@ -517,6 +524,7 @@ private:
   bool loaded_ = false;
   uint64_t time_ = 0;
   std::string dir_;
+  uint64_t eventsFileSize_ = 0;
   mapped_type emptyValue_{};
 
   enum ReadResult {
@@ -554,6 +562,7 @@ private:
       flush(events_, true);
       closeFile(events_);
       events_ = nullptr;
+      eventsFileSize_ = 0;
     }
   }
 
@@ -564,6 +573,8 @@ private:
     if (!events_) {
       throw std::runtime_error("cannot open events file for writing");
     }
+    long pos = ftell(events_);
+    eventsFileSize_ = (pos >= 0) ? static_cast<uint64_t>(pos) : 0;
   }
 
   void writeSnapshot(uint64_t snapshotTime) {
@@ -693,6 +704,9 @@ private:
         fwrite(buffer_.data(), 1, payloadSize, f) != payloadSize ||
         fflush(f) != 0) {
       throw std::runtime_error("file write error");
+    }
+    if (f == events_) {
+      eventsFileSize_ += headerIdx + payloadSize;
     }
     writeOffset_ = 0;
   }
