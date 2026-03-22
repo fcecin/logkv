@@ -14,7 +14,7 @@ using namespace logkv;
 // Simple string wrapper to act as K/V if needed,
 // though we will use std::string directly for this test.
 
-int main(int argc, char* argv[]) {
+int main() {
   std::cout << "--- LogKV Parallel Fork Test ---" << std::endl;
 
 #if LOGKV_WINDOWS

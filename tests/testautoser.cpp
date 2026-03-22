@@ -659,7 +659,7 @@ void test_variant_type() {
 // Test runner
 // -----------------------------------------------------------------------------
 
-int main(int argc, char* argv[]) {
+int main() {
   RUN_TEST(test_arithmetic_integers);
   RUN_TEST(test_arithmetic_big_endian_check);
 

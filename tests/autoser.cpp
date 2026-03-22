@@ -146,7 +146,7 @@ void test_serialization(const T& original_obj, const std::string& test_name) {
 // main
 // =============================================================================
 
-int main(int argc, char* argv[]) {
+int main() {
   {
     // 1. Test a populated TestObject
     ArrayHash test_hash;

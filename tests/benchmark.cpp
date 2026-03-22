@@ -28,7 +28,7 @@ Bytes randomBytes(size_t len, std::mt19937_64& rng) {
   return b;
 }
 
-int main(int argc, char* argv[]) {
+int main() {
   int exitcode = 0;
   const std::string dirStr = "./benchdata";
 

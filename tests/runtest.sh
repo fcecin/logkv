@@ -5,7 +5,7 @@ RESET='\033[0m'
 
 BUILD_TYPE="debug"
 USE_ASAN=true
-COMPILER_FLAGS="-g -O0"
+COMPILER_FLAGS="-g -O0 -Wall -Wextra"
 TEST_NAME=""
 
 for arg in "$@"; do
@@ -13,7 +13,7 @@ for arg in "$@"; do
         --release)
             BUILD_TYPE="release"
             USE_ASAN=false
-            COMPILER_FLAGS="-O3"
+            COMPILER_FLAGS="-O3 -Wall -Wextra"
             ;;
         --asan)
             USE_ASAN=true

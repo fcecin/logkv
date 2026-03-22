@@ -7,7 +7,7 @@ using namespace logkv;
 
 #include <iostream>
 
-int main(int argc, char* argv[]) {
+int main() {
   const std::string dirStr = "./hellodata";
 
   Bytes k = bytesDecodeHex("aabbcc");

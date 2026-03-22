@@ -149,7 +149,7 @@ private:
 
 template <typename T>
 struct serializer<T, std::enable_if_t<std::is_integral_v<T>>> {
-  static size_t get_size(const T& val) { return sizeof(T); }
+  static size_t get_size(const T&) { return sizeof(T); }
   static bool is_empty(const T& val) { return val == T(); }
   static size_t write(char* dest, size_t size, const T& val) {
     constexpr size_t required_size = sizeof(T);
@@ -275,7 +275,7 @@ struct serializer<std::span<T>,
 template <typename T, size_t N>
 struct serializer<std::array<T, N>,
                   std::enable_if_t<sizeof(T) == 1 && std::is_trivial_v<T>>> {
-  static size_t get_size(const std::array<T, N>& arr) { return N; }
+  static size_t get_size(const std::array<T, N>&) { return N; }
   static bool is_empty(const std::array<T, N>& arr) {
     return std::all_of(arr.begin(), arr.end(),
                        [](const T& val) { return val == T{}; });
@@ -526,10 +526,10 @@ struct serializer<T, std::void_t<typename composite_traits<T>::member_types>> {
 template <> struct serializer<std::monostate> {
   static size_t get_size(const std::monostate&) { return 0; }
   static bool is_empty(const std::monostate&) { return true; }
-  static size_t write(char* dest, size_t size, const std::monostate&) {
+  static size_t write(char*, size_t, const std::monostate&) {
     return 0;
   }
-  static size_t read(const char* src, size_t size, std::monostate& v) {
+  static size_t read(const char*, size_t, std::monostate&) {
     return 0;
   }
 };
