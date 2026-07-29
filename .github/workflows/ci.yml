@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# logkv is header-only; the store is Windows-guarded (forkSave degrades to a
+# synchronous snapshot off POSIX). Build the crc32c dep + compile and run the
+# shell test suite on all three OSes. ASAN auto-disables on MinGW (no libasan).
+
+jobs:
+  linux:
+    name: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y cmake g++ libboost-dev
+      - name: Build + test
+        run: ./test.sh
+
+  macos:
+    name: macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps
+        run: brew install cmake boost
+      - name: Build + test
+        # Homebrew Boost is not on the compiler's default include path.
+        env:
+          CPLUS_INCLUDE_PATH: /opt/homebrew/include
+        run: ./test.sh
+
+  windows:
+    name: windows
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - name: MSYS2 / MinGW64 toolchain + deps
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-boost
+      - name: Build + test
+        run: ./test.sh

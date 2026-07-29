@@ -83,6 +83,9 @@ TEST_SCRIPT_BASENAMES=$(find "$TEST_DIR" -maxdepth 1 -type f -name "*.sh" ! -nam
 if [ -d "$TEST_DIR" ]; then
     # pushd changes directory and stores the previous one, popd returns.
     pushd "$TEST_DIR" > /dev/null || exit 1
+    # The wrappers invoke `runtest.sh` bare, so it must resolve via PATH. CI
+    # runners (unlike a dev shell or MSYS2) do not put '.' on PATH.
+    export PATH=".:$PATH"
 else
     echo -e "${RED}FATAL: Test directory $TEST_DIR not found.${NC}"
     exit 1

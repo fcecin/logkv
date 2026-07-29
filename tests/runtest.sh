@@ -31,6 +31,11 @@ for arg in "$@"; do
     esac
 done
 
+# MinGW/MSYS ship no libasan; ASAN links fail there. Auto-disable on Windows.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) USE_ASAN=false ;;
+esac
+
 if [ -z "$TEST_NAME" ]; then
     echo "Usage: ./runtest.sh <test_name> [--release] [--asan] [--noasan]"
     exit 1
@@ -41,7 +46,7 @@ if [ ! -f "${TEST_NAME}.cpp" ]; then
     exit 1
 fi
 
-MODE_STR="${BUILD_TYPE^^}"
+MODE_STR="$(printf '%s' "$BUILD_TYPE" | tr '[:lower:]' '[:upper:]')"  # macOS ships bash 3.2 (no ${x^^})
 
 if [ "$USE_ASAN" = true ]; then
     COMPILER_FLAGS="$COMPILER_FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer"
