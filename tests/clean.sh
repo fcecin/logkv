@@ -13,5 +13,7 @@ rm -f forktest2
 rm -rf forktest2data
 rm -f mode
 rm -f testcrc
+rm -f forkreap
+rm -rf forkreapdata
 rm -f forkbuffer
 rm -rf forkbufferdata

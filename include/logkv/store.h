@@ -472,9 +472,7 @@ public:
     closeEventsFile();
 #if !LOGKV_WINDOWS
     if (mode == StoreSaveMode::forkSave) {
-      int status;
-      while (waitpid(-1, &status, WNOHANG) > 0) {
-      }
+      reapChildren();
       uint64_t snapshotTime = time_ + 1;
       pid_t pid = fork();
       if (pid == -1) {
@@ -488,6 +486,7 @@ public:
         }
         _exit(0);
       } else { // Parent
+        children_.push_back(pid);
         time_ = snapshotTime;
         openEventsFile();
         return pid;
@@ -522,6 +521,16 @@ private:
   std::string dir_;
   uint64_t eventsFileSize_ = 0;
   mapped_type emptyValue_{};
+#if !LOGKV_WINDOWS
+  std::vector<pid_t> children_;
+
+  void reapChildren() {
+    std::erase_if(children_, [](pid_t pid) {
+      int status;
+      return waitpid(pid, &status, WNOHANG) != 0;
+    });
+  }
+#endif
 
   enum ReadResult {
     RR_Success = 0,
