@@ -50,8 +50,14 @@ int main() {
   }
   struct rusage ru {};
   getrusage(RUSAGE_SELF, &ru);
-  if (ru.ru_maxrss > 256 * 1024) {
-    std::cerr << "FAIL: load() reached " << ru.ru_maxrss << " KiB resident" << std::endl;
+  // macOS gives `ru_maxrss` in bytes. Linux gives it in KiB.
+#if defined(__APPLE__)
+  const long maxrssKiB = long(ru.ru_maxrss / 1024);
+#else
+  const long maxrssKiB = long(ru.ru_maxrss);
+#endif
+  if (maxrssKiB > 256 * 1024) {
+    std::cerr << "FAIL: load() reached " << maxrssKiB << " KiB resident" << std::endl;
     return 1;
   }
   std::filesystem::remove_all(dir);
