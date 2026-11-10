@@ -17,3 +17,5 @@ rm -f forkreap
 rm -rf forkreapdata
 rm -f forkbuffer
 rm -rf forkbufferdata
+rm -f garbagetail
+rm -rf garbagetaildata

@@ -3,8 +3,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -515,6 +518,7 @@ private:
   std::vector<char> buffer_;
   size_t writeOffset_ = 0;
   size_t readOffset_ = 0;
+  uint64_t replayEnd_ = std::numeric_limits<uint64_t>::max();
   bool forceCRC32_ = false;
   bool loaded_ = false;
   uint64_t time_ = 0;
@@ -716,6 +720,22 @@ private:
     writeOffset_ = 0;
   }
 
+  static int64_t tellPos(FILE* f) {
+#if LOGKV_WINDOWS
+    return _ftelli64(f);
+#else
+    return static_cast<int64_t>(ftello(f));
+#endif
+  }
+
+  static int seekPos(FILE* f, int64_t off, int whence) {
+#if LOGKV_WINDOWS
+    return _fseeki64(f, off, whence);
+#else
+    return fseeko(f, static_cast<off_t>(off), whence);
+#endif
+  }
+
   /**
    * Reads a frame from disk into the buffer and verifies integrity.
    * Returns a `ReadResult` enum value, where 0 is success and any
@@ -744,6 +764,10 @@ private:
     uint32_t diskCRC = 0;
     std::memcpy(&diskCRC, headerBuf + extraLenBytes, crcBytes);
     if (buffer_.size() < payloadSize) {
+      const int64_t pos = tellPos(f);
+      if (pos >= 0 && static_cast<uint64_t>(pos) + payloadSize > replayEnd_) {
+        return RR_Frame_Underflow;
+      }
       buffer_.resize(payloadSize);
     }
     if (fread(buffer_.data(), 1, payloadSize, f) != payloadSize) {
@@ -812,6 +836,13 @@ private:
     writeOffset_ = 0;
     readOffset_ = 0;
     try {
+      replayEnd_ = std::numeric_limits<uint64_t>::max();
+      if (seekPos(f, 0, SEEK_END) == 0) {
+        const int64_t end = tellPos(f);
+        if (end >= 0) {
+          replayEnd_ = static_cast<uint64_t>(end);
+        }
+      }
       if (fseek(f, 0, SEEK_SET) != 0) {
         return false;
       }
