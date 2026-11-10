@@ -469,11 +469,7 @@ public:
     if (!loaded_) {
       throw std::runtime_error("cannot save() without calling load() first");
     }
-    if (events_) {
-      fclose(events_);
-      events_ = nullptr;
-      eventsFileSize_ = 0;
-    }
+    closeEventsFile();
 #if !LOGKV_WINDOWS
     if (mode == StoreSaveMode::forkSave) {
       int status;
